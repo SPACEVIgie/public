@@ -498,6 +498,9 @@
       token: state.token || undefined,
       espace_id: state.selectedEspaceId,
       unite_choisie: s.unite,
+      // Créneau explicite (§17.1bis) : pour une demi-journée, on transmet matin/après-midi au backend
+      // afin qu'il pose la bonne plage (8h30-12h30 vs 14h-18h) sans avoir à la déduire de l'heure.
+      creneau: s.unite === 'demi_journee' ? (s.demiPeriode === 'apresmidi' ? 'apres_midi' : 'matin') : undefined,
       heure_debut: horaires.debut,
       heure_fin: horaires.fin,
       jours: [{ date_jour: s.date, nombre_personnes_devis: Number(s.capaciteMin) }],
