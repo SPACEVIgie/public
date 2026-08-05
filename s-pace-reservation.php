@@ -2,7 +2,7 @@
 /**
  * Plugin Name: S-PACE Réservation
  * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Consomme l'API S-RESA (bloc 9 de la spec).
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: S-PACE Business Center
  * Text Domain: space-reservation
  * Update URI: https://github.com/SPACEVIgie/public
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SPACE_RESERVATION_VERSION', '1.0.0');
+define('SPACE_RESERVATION_VERSION', '1.0.1');
 define('SPACE_RESERVATION_OPTION_API_URL', 'space_reservation_api_url');
 define('SPACE_RESERVATION_DEFAULT_API_URL', 'https://portail.s-pace.fr/sresa/api');
 
