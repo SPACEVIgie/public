@@ -2,7 +2,7 @@
 /**
  * Plugin Name: S-PACE Réservation
  * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Consomme l'API S-RESA (bloc 9 de la spec).
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: S-PACE Business Center
  * Text Domain: space-reservation
  * Update URI: https://github.com/SPACEVIgie/public
@@ -12,9 +12,13 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SPACE_RESERVATION_VERSION', '1.1.0');
+define('SPACE_RESERVATION_VERSION', '1.2.0');
 define('SPACE_RESERVATION_OPTION_API_URL', 'space_reservation_api_url');
 define('SPACE_RESERVATION_DEFAULT_API_URL', 'https://portail.s-pace.fr/sresa/api');
+// §17.15 — clé d'API par installation. Optionnelle pendant la transition (le serveur accepte un
+// appel sans clé mais le journalise). La clé IDENTIFIE l'installation et sert d'accroche au
+// rate-limit ; elle n'authentifie pas (un tunnel public l'expose forcément côté navigateur).
+define('SPACE_RESERVATION_OPTION_API_KEY', 'space_reservation_api_key');
 
 /**
  * Mises à jour automatiques depuis les Releases du dépôt public GitHub SPACEVIgie/public.
@@ -33,6 +37,11 @@ function space_reservation_register_settings() {
         'type' => 'string',
         'sanitize_callback' => 'esc_url_raw',
         'default' => SPACE_RESERVATION_DEFAULT_API_URL,
+    ]);
+    register_setting('space_reservation', SPACE_RESERVATION_OPTION_API_KEY, [
+        'type' => 'string',
+        'sanitize_callback' => 'sanitize_text_field',
+        'default' => '',
     ]);
 }
 add_action('admin_init', 'space_reservation_register_settings');
@@ -65,6 +74,17 @@ function space_reservation_render_settings_page() {
                                value="<?php echo esc_attr(get_option(SPACE_RESERVATION_OPTION_API_URL, SPACE_RESERVATION_DEFAULT_API_URL)); ?>"
                                class="regular-text" placeholder="https://portail.s-pace.fr/sresa/api">
                         <p class="description">Base de l'API S-RESA (sans slash final). Le shortcode <code>[space_reservation]</code> l'utilise pour toutes ses requêtes.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="space_reservation_api_key">Clé d'API</label></th>
+                    <td>
+                        <input type="text" id="space_reservation_api_key" name="<?php echo esc_attr(SPACE_RESERVATION_OPTION_API_KEY); ?>"
+                               value="<?php echo esc_attr(get_option(SPACE_RESERVATION_OPTION_API_KEY, '')); ?>"
+                               class="regular-text" autocomplete="off" placeholder="fournie par S-PACE">
+                        <p class="description">Clé d'API fournie par S-PACE, propre à cette installation. Facultative pour l'instant :
+                        laissée vide, le tunnel continue de fonctionner. Elle identifie l'installation et protège l'API
+                        contre les usages abusifs. À renseigner dès que S-PACE vous l'a communiquée.</p>
                     </td>
                 </tr>
             </table>
@@ -102,6 +122,7 @@ function space_reservation_enqueue_assets() {
     );
     wp_localize_script('space-reservation', 'SpaceReservationConfig', [
         'apiUrl' => untrailingslashit(get_option(SPACE_RESERVATION_OPTION_API_URL, SPACE_RESERVATION_DEFAULT_API_URL)),
+        'apiKey' => (string) get_option(SPACE_RESERVATION_OPTION_API_KEY, ''),
         'pageUrl' => untrailingslashit(explode('?', (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'])[0]),
     ]);
 }

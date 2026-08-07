@@ -4,7 +4,9 @@
   var cfg = window.SpaceReservationConfig || {};
   var API_URL = (cfg.apiUrl || 'https://portail.s-pace.fr/sresa/api').replace(/\/$/, '');
   var PAGE_URL = cfg.pageUrl || window.location.href.split('?')[0];
+  var API_KEY = cfg.apiKey || '';
   var SNAPSHOT_KEY = 'spr_pending_snapshot';
+  var STRIPE_JS = 'https://js.stripe.com/v3/';
 
   var root = document.getElementById('space-reservation-app');
   if (!root) return;
@@ -31,11 +33,25 @@
     loading: false,
     error: null,
     resultat: null,
+    // Paiement en ligne (Stripe) — remplis quand mode_paiement === 'en_ligne'.
+    stripeClientSecret: null,
+    reservationId: null,
+    stripeMounted: false,   // garde-fou : ne monter le Payment Element qu'une fois (render() réécrit le DOM)
+    stripe: null,
+    stripeElements: null,
+    // Prise en compte (§17.14) : conflit d'agenda détecté à la confirmation → demande basculée en
+    // validation équipe, message de « prise en compte » plutôt qu'une confirmation/paiement.
+    aRevoir: false,
+    messageClient: null,
   };
 
   function api(path, opts) {
     opts = opts || {};
     var headers = { 'Content-Type': 'application/json' };
+    // §17.15 — clé d'API par installation (optionnelle pendant la transition). Le serveur accepte
+    // l'absence de clé mais la journalise ; une clé inconnue est refusée (403). La clé identifie
+    // l'installation (elle n'authentifie pas : un tunnel public l'expose forcément côté navigateur).
+    if (API_KEY) headers['X-Space-Api-Key'] = API_KEY;
     return fetch(API_URL + path, Object.assign({ headers: headers, cache: 'no-store' }, opts))
       .then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (data) {
@@ -55,6 +71,34 @@
   function h(strings) {
     var args = Array.prototype.slice.call(arguments, 1);
     return strings.reduce(function (acc, s, i) { return acc + s + (args[i] !== undefined ? args[i] : ''); }, '');
+  }
+
+  // Montant TTC formaté « 216.00 € TTC » (cohérent avec le style existant du tunnel), ou null.
+  function fmtTtc(tarif) {
+    if (!tarif || tarif.erreur || tarif.tarif_ttc == null) return null;
+    return Number(tarif.tarif_ttc).toFixed(2) + ' € TTC';
+  }
+
+  // ===================== SÉLECTION / TARIF PAR SALLE (§17.17.4, release v1.2.0) =====================
+  // Chaque salle proposée porte SON PROPRE tarif (e.tarif, calculé à sa taille réelle côté serveur).
+  // Le montant affiché suit la salle SÉLECTIONNÉE et se recalcule à chaque changement de choix. La
+  // facturation est ancrée côté serveur sur la même taille réelle → prix affiché = prix facturé.
+  function espaceSelectionne() {
+    if (!state.disponibilite || !state.disponibilite.espaces) return null;
+    var id = state.selectedEspaceId;
+    return state.disponibilite.espaces.filter(function (e) { return e.id === id; })[0] || null;
+  }
+
+  // Tarif de la salle choisie (repli sur le tarif global informatif si la salle n'en porte pas).
+  function tarifSelection() {
+    var e = espaceSelectionne();
+    if (e && e.tarif) return e.tarif;
+    return state.disponibilite ? state.disponibilite.tarif : null;
+  }
+
+  function montantSelection() {
+    var t = tarifSelection();
+    return t && !t.erreur && t.tarif_ttc != null ? Number(t.tarif_ttc) : null;
   }
 
   // ===================== UTILITAIRES DATE/HEURE =====================
@@ -115,12 +159,14 @@
 
   // ===================== RENDU =====================
   function render() {
+    // L'étape « paiement Stripe » (7) réutilise le point d'étape « Paiement » (4) dans le fil.
+    var dotStep = state.step === 7 ? 4 : state.step;
     var stepsHtml = h(['<div class="spr-steps">',
-      renderDot(1, 'Recherche'), '<div class="spr-step-line"></div>',
-      renderDot(2, 'Salle'), '<div class="spr-step-line"></div>',
-      renderDot(3, 'Options'), '<div class="spr-step-line"></div>',
-      renderDot(4, 'Paiement'), '<div class="spr-step-line"></div>',
-      renderDot(5, 'Confirmation'),
+      renderDot(1, 'Recherche', dotStep), '<div class="spr-step-line"></div>',
+      renderDot(2, 'Salle', dotStep), '<div class="spr-step-line"></div>',
+      renderDot(3, 'Options', dotStep), '<div class="spr-step-line"></div>',
+      renderDot(4, 'Paiement', dotStep), '<div class="spr-step-line"></div>',
+      renderDot(5, 'Confirmation', dotStep),
       '</div>']);
 
     var body = '';
@@ -130,16 +176,18 @@
     else if (state.step === 4) body = renderStepPaiement();
     else if (state.step === 5) body = renderStepRecap();
     else if (state.step === 6) body = renderStepConfirmation();
+    else if (state.step === 7) body = renderStepPaiementStripe();
 
     var errorHtml = state.error ? h(['<div class="spr-banner spr-error">', esc(state.error), '</div>']) : '';
 
-    root.innerHTML = (state.step < 6 ? stepsHtml : '') + errorHtml + body;
+    root.innerHTML = (state.step < 6 || state.step === 7 ? stepsHtml : '') + errorHtml + body;
     bindEvents();
   }
 
-  function renderDot(n, label) {
-    var cls = state.step > n ? 'done' : (state.step === n ? 'active' : '');
-    return '<div class="spr-step-dot ' + cls + '" title="' + esc(label) + '">' + (state.step > n ? '✓' : n) + '</div>';
+  function renderDot(n, label, dotStep) {
+    var cur = dotStep === undefined ? state.step : dotStep;
+    var cls = cur > n ? 'done' : (cur === n ? 'active' : '');
+    return '<div class="spr-step-dot ' + cls + '" title="' + esc(label) + '">' + (cur > n ? '✓' : n) + '</div>';
   }
 
   // ---- Étape 1 : recherche ----
@@ -178,7 +226,7 @@
       '</div>']);
   }
 
-  // ---- Étape 2 : choix de la salle ----
+  // ---- Étape 2 : choix de la salle (tarif PAR SALLE) ----
   function renderStepSalle() {
     var d = state.disponibilite;
     if (!d || !d.espaces.length) {
@@ -197,21 +245,37 @@
       var ficheLink = e.url_fiche_site
         ? h(['<a class="spr-room-fiche" href="', esc(e.url_fiche_site), '" target="_blank" rel="noopener noreferrer">Voir la salle ↗</a>'])
         : '';
+      // Surclassement : la salle est plus grande que le besoin. On le SIGNALE clairement (le client
+      // doit comprendre qu'on lui propose plus grand) — et son tarif propre, plus élevé, est affiché
+      // juste à côté (fini le « offert » : la salle réelle est facturée, décision Olivier).
+      var tag = e.surclasse ? '<span class="spr-room-tag">Plus grande que votre besoin</span>' : '';
+      var prixTtc = fmtTtc(e.tarif);
+      var prixHtml = prixTtc
+        ? h(['<div class="spr-room-price">', prixTtc, '</div>'])
+        : '<div class="spr-room-price spr-room-price-devis">Sur devis</div>';
       return h(['<div class="spr-room-item">',
         '<label class="spr-room-option', sel ? ' spr-selected' : '', '">',
         '<input type="radio" name="spr-espace" value="', e.id, '"', sel ? ' checked' : '', '>',
-        '<div><div class="spr-room-name">', esc(e.nom), e.surclasse ? '<span class="spr-room-tag">Surclassement offert</span>' : '', '</div>',
+        '<div class="spr-room-main"><div class="spr-room-name">', esc(e.nom), tag, '</div>',
         '<div class="spr-room-cap">Capacité ', esc(e.capacite), ' personnes</div></div>',
+        prixHtml,
         '</label>',
         ficheLink,
         '</div>']);
     }).join('');
 
+    var sel = espaceSelectionne();
+    var montantTtc = fmtTtc(tarifSelection());
+    var recapSel = sel ? h(['<div class="spr-tarif-box">',
+      '<span class="spr-tarif-lbl">', esc(sel.nom), sel.surclasse ? ' · plus grande que votre besoin' : '', '</span>',
+      '<span class="spr-tarif-val">', montantTtc || 'Sur devis', '</span>',
+      '</div>']) : '';
+
     return h(['<div class="spr-card">',
       '<div class="spr-title">Choisissez votre espace</div>',
-      '<div class="spr-subtitle">', formatDateFr(state.search.date), '</div>',
+      '<div class="spr-subtitle">', formatDateFr(state.search.date), ' — chaque salle est affichée à son tarif.</div>',
       roomsHtml,
-      d.tarif && !d.tarif.erreur ? h(['<div class="spr-tarif-box"><span class="spr-tarif-lbl">Tarif estimé</span><span class="spr-tarif-val">', d.tarif.tarif_ttc.toFixed(2), ' € TTC</span></div>']) : '',
+      recapSel,
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour1">← Retour</button>',
       '<button class="spr-btn spr-primary" id="spr-btn-continuer2"', state.selectedEspaceId ? '' : ' disabled', '>Continuer →</button>',
@@ -276,17 +340,30 @@
         '</div>']);
     }
 
+    var op = state.optionsPaiement || {};
     var options = [{ value: 'devis', title: 'Demande de devis', sub: 'Nous vous recontactons pour finaliser votre réservation.' }];
-    if (state.optionsPaiement && state.optionsPaiement.credit_disponible) {
-      options.push({ value: 'credit_salle', title: 'Crédit salle', sub: 'Solde disponible : ' + state.optionsPaiement.credit_solde_heures + ' h' });
+    // §4.9 — Paiement en ligne par carte : proposé UNIQUEMENT si le SERVEUR le déclare possible
+    // (Stripe configuré, réservation sur un seul jour…). La règle est portée par l'endpoint
+    // /options-paiement (§17.14 : pas de règle de bascule figée côté plugin). Visible DÈS LE CHOIX.
+    if (op.paiement_en_ligne_disponible) {
+      options.push({ value: 'en_ligne', title: 'Paiement en ligne par carte', sub: 'Réservation confirmée immédiatement après le paiement (paiement sécurisé Stripe).' });
     }
-    if (state.optionsPaiement && state.optionsPaiement.paiement_fin_mois_disponible) {
+    if (op.credit_disponible) {
+      options.push({ value: 'credit_salle', title: 'Crédit salle', sub: 'Solde disponible : ' + op.credit_solde_heures + ' h' });
+    }
+    if (op.paiement_fin_mois_disponible) {
       options.push({ value: 'sur_facture', title: 'Facture fin de mois', sub: 'Réservation confirmée immédiatement.' });
     }
+    // Message clair, dès le choix, quand le paiement en ligne n'est pas proposé pour une raison connue
+    // (ex. multi-jours) — le client comprend tout de suite que sa demande passera par notre équipe.
+    var indispoNote = (!op.paiement_en_ligne_disponible && op.paiement_en_ligne_motif === 'multi_jours')
+      ? '<div class="spr-hint">Le paiement en ligne n\'est pas disponible pour une réservation sur plusieurs jours : votre demande sera validée par notre équipe.</div>'
+      : '';
+
     var paymentHtml = options.map(function (o) {
-      var sel = state.modePaiement === o.value;
-      return h(['<label class="spr-payment-option', sel ? ' spr-selected' : '', '">',
-        '<input type="radio" name="spr-mode" value="', o.value, '"', sel ? ' checked' : '', '>',
+      var selp = state.modePaiement === o.value;
+      return h(['<label class="spr-payment-option', selp ? ' spr-selected' : '', '">',
+        '<input type="radio" name="spr-mode" value="', o.value, '"', selp ? ' checked' : '', '>',
         '<div><div class="spr-po-title">', esc(o.title), '</div><div class="spr-po-sub">', esc(o.sub), '</div></div>',
         '</label>']);
     }).join('');
@@ -303,6 +380,7 @@
       '<div class="spr-title">Paiement &amp; coordonnées</div>',
       identifBlock,
       '<div class="spr-payment-choice">', paymentHtml, '</div>',
+      indispoNote,
       contactHtml,
       '<div class="spr-field"><label>Commentaire (optionnel)</label><textarea id="spr-commentaire" rows="3">', esc(state.commentaire), '</textarea></div>',
       '<div class="spr-actions">',
@@ -313,31 +391,62 @@
 
   // ---- Étape 5 : récapitulatif ----
   function renderStepRecap() {
-    var espace = state.disponibilite.espaces.filter(function (e) { return e.id === state.selectedEspaceId; })[0];
-    var tarif = state.disponibilite.tarif;
-    var modeLabels = { devis: 'Demande de devis', credit_salle: 'Crédit salle', sur_facture: 'Facture fin de mois' };
+    var espace = espaceSelectionne();
+    var montantTtc = fmtTtc(tarifSelection());
+    var modeLabels = { devis: 'Demande de devis', en_ligne: 'Paiement en ligne par carte', credit_salle: 'Crédit salle', sur_facture: 'Facture fin de mois' };
+    var enLigne = state.modePaiement === 'en_ligne';
 
     return h(['<div class="spr-card">',
       '<div class="spr-title">Récapitulatif</div>',
-      '<div class="spr-recap-line"><span>Espace</span><span>', esc(espace ? espace.nom : ''), '</span></div>',
+      '<div class="spr-recap-line"><span>Espace</span><span>', esc(espace ? espace.nom : ''), espace && espace.surclasse ? ' (plus grande)' : '', '</span></div>',
       '<div class="spr-recap-line"><span>Date</span><span>', formatDateFr(state.search.date), '</span></div>',
       '<div class="spr-recap-line"><span>Effectif</span><span>', esc(state.search.capaciteMin), ' personnes</span></div>',
       '<div class="spr-recap-line"><span>Paiement</span><span>', modeLabels[state.modePaiement] || state.modePaiement, '</span></div>',
-      tarif && !tarif.erreur ? h(['<div class="spr-recap-line"><span>Montant estimé TTC</span><span>', tarif.tarif_ttc.toFixed(2), ' €</span></div>']) : '',
+      montantTtc ? h(['<div class="spr-recap-line"><span>Montant', enLigne ? ' à régler' : ' estimé', ' TTC</span><span>', montantTtc, '</span></div>']) : '',
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour4">← Retour</button>',
-      '<button class="spr-btn spr-primary" id="spr-btn-envoyer"', state.loading ? ' disabled' : '', '>', state.loading ? 'Envoi…' : 'Envoyer ma demande', '</button>',
+      '<button class="spr-btn spr-primary" id="spr-btn-envoyer"', state.loading ? ' disabled' : '', '>',
+      state.loading ? 'Envoi…' : (enLigne ? 'Continuer vers le paiement →' : 'Envoyer ma demande'), '</button>',
       '</div></div>']);
   }
 
-  // ---- Étape 6 : confirmation ----
+  // ---- Étape 6 : confirmation (ou prise en compte si conflit §17.14) ----
   function renderStepConfirmation() {
     var r = state.resultat;
+    // §17.14 — prise en compte : un conflit d'agenda a été détecté à la confirmation. On ne montre
+    // JAMAIS un refus sec (le client a rempli tout son parcours) : on affiche le message de prise en
+    // compte renvoyé par le serveur, l'équipe revient vers lui.
+    if (state.aRevoir) {
+      return h(['<div class="spr-card spr-confirm-box">',
+        '<div class="spr-confirm-icon">⏳</div>',
+        '<div class="spr-title">Demande prise en compte</div>',
+        '<div class="spr-subtitle">', esc(state.messageClient || 'Votre demande a bien été prise en compte. Notre équipe revient vers vous très vite pour la confirmer.'),
+        r && r.reservation && r.reservation.numero_devis ? h([' Référence : ', esc(r.reservation.numero_devis), '.']) : '',
+        '</div>',
+        '</div>']);
+    }
+    var paye = r && r.reservation && (r.reservation.statut_paiement === 'paye' || state.modePaiement === 'en_ligne');
     return h(['<div class="spr-card spr-confirm-box">',
       '<div class="spr-confirm-icon">✓</div>',
-      '<div class="spr-title">Demande envoyée</div>',
-      '<div class="spr-subtitle">Référence : ', esc(r && r.reservation ? r.reservation.numero_devis : ''), '. Vous recevrez une confirmation par email très prochainement.</div>',
+      '<div class="spr-title">', paye ? 'Paiement confirmé' : 'Demande envoyée', '</div>',
+      '<div class="spr-subtitle">Référence : ', esc(r && r.reservation ? r.reservation.numero_devis : ''), '. ',
+      paye ? 'Votre réservation est confirmée.' : 'Vous recevrez une confirmation par email très prochainement.',
+      ' Un email vous a été adressé.</div>',
       '</div>']);
+  }
+
+  // ---- Étape 7 : paiement en ligne (Stripe Payment Element) ----
+  function renderStepPaiementStripe() {
+    var montantTtc = fmtTtc(tarifSelection());
+    return h(['<div class="spr-card">',
+      '<div class="spr-title">Paiement sécurisé</div>',
+      '<div class="spr-subtitle">', montantTtc ? ('Montant à régler : ' + montantTtc + '.') : '', ' Paiement par carte via Stripe.</div>',
+      '<div id="spr-stripe-element" class="spr-stripe-element"><div class="spr-loading">Chargement du module de paiement…</div></div>',
+      '<div id="spr-stripe-status" class="spr-stripe-status"></div>',
+      '<div class="spr-actions">',
+      '<button class="spr-btn" id="spr-btn-retour-pay">← Retour</button>',
+      '<button class="spr-btn spr-primary" id="spr-btn-payer">', montantTtc ? ('Payer ' + montantTtc.replace(' TTC', '')) : 'Payer', '</button>',
+      '</div></div>']);
   }
 
   // ===================== ÉVÉNEMENTS =====================
@@ -396,6 +505,14 @@
     } else if (state.step === 5) {
       if (byId('spr-btn-retour4')) byId('spr-btn-retour4').onclick = function () { state.step = 4; render(); };
       if (byId('spr-btn-envoyer')) byId('spr-btn-envoyer').onclick = doReserver;
+    } else if (state.step === 7) {
+      if (byId('spr-btn-retour-pay')) byId('spr-btn-retour-pay').onclick = function () {
+        // Retour au récap : on repart proprement (le PaymentIntent créé reste en attente côté Stripe,
+        // sans effet — la réservation reste en 'simulation' tant qu'aucun paiement n'aboutit).
+        state.step = 5; state.stripeMounted = false; state.error = null; render();
+      };
+      if (byId('spr-btn-payer')) byId('spr-btn-payer').onclick = doPayer;
+      if (!state.stripeMounted) initStripePayment();
     }
   }
 
@@ -475,24 +592,35 @@
     });
   }
 
+  // Charge les modes de paiement disponibles — POUR TOUS (anonyme inclus), afin que le paiement en
+  // ligne (qui n'exige pas d'identification) s'affiche dès le choix. Le serveur décide de sa
+  // disponibilité (§17.14). Un client identifié y ajoute crédit salle / facture fin de mois.
   function chargerOptionsPaiement() {
-    if (!state.token) { render(); return; }
-    var montant = state.disponibilite && state.disponibilite.tarif && !state.disponibilite.tarif.erreur ? state.disponibilite.tarif.tarif_ttc : null;
-    api('/tunnel/options-paiement', { method: 'POST', body: JSON.stringify({ token: state.token, montant_ttc: montant }) })
-      .then(function (data) {
-        state.optionsPaiement = data;
-        state.identifie = data.identifie;
-        if (data.identifie && data.credit_disponible) state.modePaiement = 'credit_salle';
-        else if (data.identifie && data.paiement_fin_mois_disponible) state.modePaiement = 'sur_facture';
-        if (data.identifie) {
-          api('/client/moi?token=' + encodeURIComponent(state.token)).then(function (moi) {
-            state.identiteInfo = moi;
-            render();
-          }).catch(function () { render(); });
-        } else {
+    var montant = montantSelection();
+    var nbJours = 1; // tunnel public = une seule journée / demi-journée / plage à la fois
+    api('/tunnel/options-paiement', {
+      method: 'POST',
+      body: JSON.stringify({ token: state.token || undefined, montant_ttc: montant, nb_jours: nbJours }),
+    }).then(function (data) {
+      state.optionsPaiement = data;
+      state.identifie = !!data.identifie;
+      // Pré-sélection raisonnable du mode par défaut selon ce qui est réellement proposé.
+      if (data.identifie && data.credit_disponible) state.modePaiement = 'credit_salle';
+      else if (data.identifie && data.paiement_fin_mois_disponible) state.modePaiement = 'sur_facture';
+      else state.modePaiement = 'devis';
+      if (data.identifie) {
+        api('/client/moi?token=' + encodeURIComponent(state.token)).then(function (moi) {
+          state.identiteInfo = moi;
           render();
-        }
-      }).catch(function () { render(); });
+        }).catch(function () { render(); });
+      } else {
+        render();
+      }
+    }).catch(function () {
+      // En cas d'échec, on retombe sur le devis seul (jamais bloquant).
+      state.optionsPaiement = { identifie: false, paiement_en_ligne_disponible: false };
+      render();
+    });
   }
 
   function doIdentify() {
@@ -516,17 +644,13 @@
       });
   }
 
-  function doReserver() {
-    state.loading = true;
-    state.error = null;
-    render();
-
+  function construirePayload() {
     var s = state.search;
     var estHeure = s.unite === 'heure';
     var options = { pauses: [], restauration: [], amenagement_id: state.selectedAmenagementId || undefined };
     Object.keys(state.selectedPauses).forEach(function (id) {
       if (state.selectedPauses[id] > 0) {
-        options.pauses.push({ date_jour: s.date, heure_pause: '10:30', recette_id: Number(id), nombre_personnes: state.selectedPauses[id] });
+        options.pauses.push({ date_jour: s.date, heure_pause: '10:30', formule_id: Number(id), nombre_personnes: state.selectedPauses[id] });
       }
     });
     if (state.selectedRestauration > 0 && state.optionsCatalogue.restauration.length) {
@@ -544,6 +668,8 @@
       heure_debut: estHeure ? s.heureDebut : undefined,
       heure_fin: estHeure ? s.heureFin : undefined,
       jours: [{ date_jour: s.date, nombre_personnes_devis: Number(s.capaciteMin) }],
+      // Catégorie initialement demandée (trace + surclassement). La FACTURATION est ancrée côté
+      // serveur sur la taille RÉELLE de la salle choisie (release v1.2.0) → prix affiché = prix facturé.
       taille_demandee_id: state.disponibilite.taille_demandee.id,
       unite: s.unite,
       duree: computeDuree(),
@@ -551,14 +677,41 @@
       commentaire_general: state.commentaire || undefined,
       options: options,
     };
-    if (!state.identifie) {
-      payload.contact = state.contact;
-    }
+    if (!state.identifie) payload.contact = state.contact;
+    return payload;
+  }
 
-    api('/tunnel/reserver', { method: 'POST', body: JSON.stringify(payload) })
+  function doReserver() {
+    state.loading = true;
+    state.error = null;
+    render();
+
+    api('/tunnel/reserver', { method: 'POST', body: JSON.stringify(construirePayload()) })
       .then(function (data) {
         state.resultat = data;
         state.loading = false;
+
+        // §17.14 — conflit d'agenda détecté à la confirmation : la demande est prise en compte, le
+        // paiement est coupé côté serveur. On affiche le message de prise en compte, pas de paiement.
+        if (data.a_revoir) {
+          state.aRevoir = true;
+          state.messageClient = data.message_client;
+          state.step = 6;
+          render();
+          return;
+        }
+
+        // Paiement en ligne : le serveur a créé un PaymentIntent et renvoyé son client_secret →
+        // on passe à l'étape de paiement Stripe. Sinon (devis / crédit / facture) : confirmation.
+        if (data.stripe_client_secret && data.reservation) {
+          state.stripeClientSecret = data.stripe_client_secret;
+          state.reservationId = data.reservation.id;
+          state.stripeMounted = false;
+          state.step = 7;
+          render();
+          return;
+        }
+
         state.step = 6;
         render();
       }).catch(function (err) {
@@ -566,6 +719,97 @@
         state.error = err.message;
         render();
       });
+  }
+
+  // ===================== PAIEMENT EN LIGNE (Stripe) =====================
+  // Charge Stripe.js à la demande (uniquement quand un paiement en ligne est réellement engagé) —
+  // aucune dépendance chargée pour les parcours devis/crédit/facture.
+  function ensureStripeJs() {
+    return new Promise(function (resolve, reject) {
+      if (window.Stripe) return resolve(window.Stripe);
+      var existing = document.querySelector('script[data-spr-stripe]');
+      if (existing) {
+        existing.addEventListener('load', function () { resolve(window.Stripe); });
+        existing.addEventListener('error', function () { reject(new Error('Chargement de Stripe.js impossible')); });
+        return;
+      }
+      var sc = document.createElement('script');
+      sc.src = STRIPE_JS;
+      sc.async = true;
+      sc.setAttribute('data-spr-stripe', '1');
+      sc.onload = function () { resolve(window.Stripe); };
+      sc.onerror = function () { reject(new Error('Chargement de Stripe.js impossible')); };
+      document.head.appendChild(sc);
+    });
+  }
+
+  function stripeStatus(msg, kind) {
+    var el = document.getElementById('spr-stripe-status');
+    if (el) el.innerHTML = msg ? '<div class="spr-banner spr-' + (kind || 'error') + '">' + esc(msg) + '</div>' : '';
+  }
+
+  // Monte le Payment Element une seule fois (garde-fou state.stripeMounted). N'appelle JAMAIS render()
+  // ensuite (il réécrirait le DOM et détruirait l'élément monté) : les erreurs s'affichent en place.
+  function initStripePayment() {
+    if (state.stripeMounted) return;
+    state.stripeMounted = true;
+    ensureStripeJs()
+      .then(function () { return api('/tunnel/stripe-config'); })
+      .then(function (conf) {
+        if (!conf || !conf.publishable_key) throw new Error('Le paiement en ligne est indisponible pour le moment.');
+        state.stripe = window.Stripe(conf.publishable_key);
+        state.stripeElements = state.stripe.elements({ clientSecret: state.stripeClientSecret });
+        var paymentElement = state.stripeElements.create('payment');
+        var mountEl = document.getElementById('spr-stripe-element');
+        if (mountEl) { mountEl.innerHTML = ''; paymentElement.mount('#spr-stripe-element'); }
+      })
+      .catch(function (err) {
+        state.stripeMounted = false;
+        stripeStatus(err.message || 'Le paiement en ligne est indisponible pour le moment.');
+      });
+  }
+
+  function doPayer() {
+    if (!state.stripe || !state.stripeElements) {
+      stripeStatus('Le module de paiement n\'est pas prêt, merci de patienter un instant.');
+      return;
+    }
+    var btn = document.getElementById('spr-btn-payer');
+    if (btn) { btn.disabled = true; btn.textContent = 'Paiement en cours…'; }
+    stripeStatus('');
+
+    state.stripe.confirmPayment({
+      elements: state.stripeElements,
+      confirmParams: { return_url: PAGE_URL },
+      redirect: 'if_required',
+    }).then(function (result) {
+      if (result.error) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Payer'; }
+        stripeStatus(result.error.message || 'Le paiement n\'a pas abouti.');
+        return;
+      }
+      var pi = result.paymentIntent;
+      if (pi && (pi.status === 'succeeded' || pi.status === 'processing')) {
+        // Confirmation immédiate côté serveur (le webhook Stripe fait le même travail en backstop,
+        // de façon idempotente). On revérifie toujours le statut réel du PaymentIntent côté serveur.
+        api('/tunnel/confirmer-paiement/' + encodeURIComponent(state.reservationId), { method: 'POST' })
+          .then(function () {
+            state.step = 6;
+            render();
+          }).catch(function () {
+            // Paiement encaissé mais confirmation serveur en retard : le webhook finalisera. On
+            // affiche quand même une confirmation (le paiement a réussi côté Stripe).
+            state.step = 6;
+            render();
+          });
+        return;
+      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Payer'; }
+      stripeStatus('Paiement en attente (statut : ' + (pi ? pi.status : 'inconnu') + '). Merci de réessayer.', 'error');
+    }).catch(function (err) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Payer'; }
+      stripeStatus(err.message || 'Le paiement n\'a pas abouti.');
+    });
   }
 
   // ===================== INIT =====================

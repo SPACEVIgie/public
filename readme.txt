@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -20,18 +20,30 @@ navigateur du visiteur, vers l'API S-RESA.
 
 1. Installer et activer le plugin.
 2. Réglages > S-PACE Réservation : vérifier l'URL de l'API S-RESA (par défaut
-   `https://portail.s-pace.fr/sresa/api`).
+   `https://portail.s-pace.fr/sresa/api`) et renseigner la clé d'API si S-PACE vous en a
+   communiqué une (facultatif dans un premier temps).
 3. Placer le shortcode `[space_reservation]` sur la page de réservation du site.
 
-== Limites de la version 1.0 ==
+== Limites de la version actuelle ==
 
 * Réservation sur une seule journée / demi-journée / plage horaire à la fois (pas de
-  réservation multi-jours depuis le tunnel public).
-* Le paiement en ligne par carte (PayZen) n'est pas encore disponible — seuls le devis,
-  le crédit salle et la facturation fin de mois (pour les clients identifiés) le sont.
+  réservation multi-jours depuis le tunnel public — une telle demande passe par l'équipe,
+  sans paiement en ligne).
 * Prêt de matériel non proposé en ligne (nécessite une vérification côté S-PACE).
 
 == Changelog ==
+
+= 1.2.0 =
+* Tarif affiché PAR SALLE : chaque espace proposé montre son propre prix, qui se recalcule à la
+  sélection. Le surclassement (salle plus grande que le besoin) est signalé avec son tarif. Le prix
+  affiché est le prix facturé (facturation ancrée côté serveur sur la taille réelle de la salle).
+* Paiement en ligne par carte (Stripe) : proposé dès l'étape de choix lorsque le serveur l'autorise
+  (réservation d'un seul jour, encaissement configuré). Parcours de paiement sécurisé intégré au
+  tunnel. La disponibilité du paiement en ligne est décidée par le serveur, jamais figée dans le plugin.
+* Message de prise en compte : si un conflit d'agenda est détecté à la confirmation, la demande est
+  prise en compte et validée par l'équipe (plus jamais de refus sec en fin de parcours).
+* Clé d'API par installation (réglage dédié) : identifie l'installation et protège l'API contre les
+  usages abusifs. Facultative pendant la transition.
 
 = 1.1.0 =
 * Recherche et réservation : le créneau (matin / après-midi / journée / heures précises) est
