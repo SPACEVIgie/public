@@ -58,17 +58,40 @@
   }
 
   // ===================== UTILITAIRES DATE/HEURE =====================
+  // Les horaires par défaut ci-dessous ne servent QU'À L'AFFICHAGE, en repli si /tunnel/creneaux
+  // n'a pas répondu. Ils sont alignés sur la grille S-RESA (§17.1bis). La requête, elle, ne les
+  // embarque jamais pour la journée/demi-journée : elle transmet le créneau, et c'est le serveur
+  // qui applique la grille (source unique, clés vigie_config sresa_horaire_*).
   function computeCreneauHoraires() {
     var c = state.config || {};
     if (state.search.unite === 'journee') {
-      return { debut: c.journee_debut || '08:00', fin: c.journee_fin || '18:00' };
+      return { debut: c.journee_debut || '08:30', fin: c.journee_fin || '18:00' };
     }
     if (state.search.unite === 'demi_journee') {
       return state.search.demiPeriode === 'matin'
-        ? { debut: c.matin_debut || '08:00', fin: c.matin_fin || '12:00' }
-        : { debut: c.apresmidi_debut || '13:30', fin: c.apresmidi_fin || '17:30' };
+        ? { debut: c.matin_debut || '08:30', fin: c.matin_fin || '12:30' }
+        : { debut: c.apresmidi_debut || '14:00', fin: c.apresmidi_fin || '18:00' };
     }
     return { debut: state.search.heureDebut, fin: state.search.heureFin };
+  }
+
+  // Créneau transmis au backend (§17.13). Pour une demi-journée : 'matin' | 'apres_midi' ; sinon
+  // undefined (la journée et les heures précises n'ont pas de créneau demi-journée). C'est cette
+  // valeur — et non des heures figées — qui pilote la grille côté serveur.
+  function computeCreneau() {
+    if (state.search.unite === 'demi_journee') {
+      return state.search.demiPeriode === 'apresmidi' ? 'apres_midi' : 'matin';
+    }
+    return undefined;
+  }
+
+  // Libellé lisible du créneau retenu, pour l'affichage sous le sélecteur de durée.
+  function libelleCreneau() {
+    var s = state.search, hor = computeCreneauHoraires();
+    if (s.unite === 'heure') {
+      return s.heureDebut && s.heureFin ? (s.heureDebut + ' – ' + s.heureFin) : '';
+    }
+    return hor.debut && hor.fin ? (hor.debut + ' – ' + hor.fin) : '';
   }
 
   function heuresEntre(debut, fin) {
@@ -150,6 +173,7 @@
       '<div class="spr-field"><label>Effectif</label><input type="number" min="1" id="spr-capacite" value="', esc(s.capaciteMin), '" placeholder="Nombre de personnes"></div>',
       '</div>',
       demiField, heureFields,
+      (s.unite !== 'heure' && libelleCreneau()) ? h(['<div class="spr-hint">Horaires : ', esc(libelleCreneau()), '</div>']) : '',
       '<div class="spr-actions spr-end"><button class="spr-btn spr-primary" id="spr-btn-rechercher"', state.loading ? ' disabled' : '', '>', state.loading ? 'Recherche…' : 'Rechercher', '</button></div>',
       '</div>']);
   }
@@ -167,11 +191,20 @@
     }
     var roomsHtml = d.espaces.map(function (e) {
       var sel = state.selectedEspaceId === e.id;
-      return h(['<label class="spr-room-option', sel ? ' spr-selected' : '', '">',
+      // §17.11 — lien « Voir la salle » (nouvel onglet), affiché seulement si la fiche est
+      // renseignée (sinon rien : pas de lien mort). Placé HORS du <label> pour que le clic
+      // ouvre la fiche sans sélectionner la salle ni détourner du parcours.
+      var ficheLink = e.url_fiche_site
+        ? h(['<a class="spr-room-fiche" href="', esc(e.url_fiche_site), '" target="_blank" rel="noopener noreferrer">Voir la salle ↗</a>'])
+        : '';
+      return h(['<div class="spr-room-item">',
+        '<label class="spr-room-option', sel ? ' spr-selected' : '', '">',
         '<input type="radio" name="spr-espace" value="', e.id, '"', sel ? ' checked' : '', '>',
         '<div><div class="spr-room-name">', esc(e.nom), e.surclasse ? '<span class="spr-room-tag">Surclassement offert</span>' : '', '</div>',
         '<div class="spr-room-cap">Capacité ', esc(e.capacite), ' personnes</div></div>',
-        '</label>']);
+        '</label>',
+        ficheLink,
+        '</div>']);
     }).join('');
 
     return h(['<div class="spr-card">',
@@ -316,9 +349,9 @@
       if (byId('spr-type')) byId('spr-type').onchange = function (e) { state.search.typeReservation = e.target.value; };
       if (byId('spr-unite')) byId('spr-unite').onchange = function (e) { state.search.unite = e.target.value; render(); };
       if (byId('spr-capacite')) byId('spr-capacite').onchange = function (e) { state.search.capaciteMin = e.target.value; };
-      if (byId('spr-demi')) byId('spr-demi').onchange = function (e) { state.search.demiPeriode = e.target.value; };
-      if (byId('spr-heure-debut')) byId('spr-heure-debut').onchange = function (e) { state.search.heureDebut = e.target.value; };
-      if (byId('spr-heure-fin')) byId('spr-heure-fin').onchange = function (e) { state.search.heureFin = e.target.value; };
+      if (byId('spr-demi')) byId('spr-demi').onchange = function (e) { state.search.demiPeriode = e.target.value; render(); };
+      if (byId('spr-heure-debut')) byId('spr-heure-debut').onchange = function (e) { state.search.heureDebut = e.target.value; render(); };
+      if (byId('spr-heure-fin')) byId('spr-heure-fin').onchange = function (e) { state.search.heureFin = e.target.value; render(); };
       if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = doRecherche;
     } else if (state.step === 2) {
       document.querySelectorAll('input[name="spr-espace"]').forEach(function (r) {
@@ -374,8 +407,8 @@
       render();
       return;
     }
-    var horaires = computeCreneauHoraires();
-    if (s.unite === 'heure' && (!horaires.debut || !horaires.fin)) {
+    var estHeure = s.unite === 'heure';
+    if (estHeure && (!s.heureDebut || !s.heureFin)) {
       state.error = 'Merci de renseigner une heure de début et de fin.';
       render();
       return;
@@ -384,11 +417,17 @@
     state.error = null;
     render();
 
-    var dateDebut = s.date + 'T' + horaires.debut + ':00';
-    var dateFin = s.date + 'T' + horaires.fin + ':00';
+    // Grille = source unique (§17.13) : pour la journée / demi-journée on N'EMBARQUE PAS d'heures
+    // dans les dates — on envoie la date seule + le créneau, et le serveur applique la grille
+    // (sresa_horaire_*). Pour « heures précises », on envoie les heures saisies par le client.
+    var creneau = computeCreneau();
+    var dateDebut = estHeure ? (s.date + 'T' + s.heureDebut + ':00') : s.date;
+    var dateFin = estHeure ? (s.date + 'T' + s.heureFin + ':00') : s.date;
     var qs = '?date_debut=' + encodeURIComponent(dateDebut) + '&date_fin=' + encodeURIComponent(dateFin)
       + '&capacite_min=' + encodeURIComponent(s.capaciteMin) + '&unite=' + encodeURIComponent(s.unite)
-      + '&duree=' + encodeURIComponent(computeDuree()) + '&type_reservation=' + encodeURIComponent(s.typeReservation);
+      + '&duree=' + encodeURIComponent(computeDuree()) + '&type_reservation=' + encodeURIComponent(s.typeReservation)
+      + (creneau ? '&creneau=' + encodeURIComponent(creneau) : '')
+      + (estHeure ? '&heure_debut=' + encodeURIComponent(s.heureDebut) + '&heure_fin=' + encodeURIComponent(s.heureFin) : '');
 
     api('/tunnel/disponibilite' + qs).then(function (data) {
       state.disponibilite = data;
@@ -483,7 +522,7 @@
     render();
 
     var s = state.search;
-    var horaires = computeCreneauHoraires();
+    var estHeure = s.unite === 'heure';
     var options = { pauses: [], restauration: [], amenagement_id: state.selectedAmenagementId || undefined };
     Object.keys(state.selectedPauses).forEach(function (id) {
       if (state.selectedPauses[id] > 0) {
@@ -498,11 +537,12 @@
       token: state.token || undefined,
       espace_id: state.selectedEspaceId,
       unite_choisie: s.unite,
-      // Créneau explicite (§17.1bis) : pour une demi-journée, on transmet matin/après-midi au backend
-      // afin qu'il pose la bonne plage (8h30-12h30 vs 14h-18h) sans avoir à la déduire de l'heure.
-      creneau: s.unite === 'demi_journee' ? (s.demiPeriode === 'apresmidi' ? 'apres_midi' : 'matin') : undefined,
-      heure_debut: horaires.debut,
-      heure_fin: horaires.fin,
+      // Créneau explicite (§17.1bis / §17.13) : pour une demi-journée on transmet matin/après-midi ;
+      // le serveur pose alors la bonne plage via la grille (8h30-12h30 vs 14h-18h). On n'envoie des
+      // heures QUE pour « heures précises » — jamais d'horaires figés pour la journée/demi-journée.
+      creneau: computeCreneau(),
+      heure_debut: estHeure ? s.heureDebut : undefined,
+      heure_fin: estHeure ? s.heureFin : undefined,
       jours: [{ date_jour: s.date, nombre_personnes_devis: Number(s.capaciteMin) }],
       taille_demandee_id: state.disponibilite.taille_demandee.id,
       unite: s.unite,
@@ -557,7 +597,10 @@
       render();
     };
 
-    api('/config/creneaux').then(function (data) {
+    // Grille horaire publique (§17.13) — endpoint carve-out public, contrairement à
+    // /config/creneaux qui est réservé au staff (SSO). Sert uniquement à l'affichage ; l'échec
+    // n'empêche rien (repli sur les horaires alignés grille de computeCreneauHoraires).
+    api('/tunnel/creneaux').then(function (data) {
       state.config = data;
       afterConfig();
     }).catch(function () {
