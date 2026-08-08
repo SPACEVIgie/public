@@ -119,6 +119,14 @@
     return { debut: state.search.heureDebut, fin: state.search.heureFin };
   }
 
+  // Pas de granularité des créneaux horaires (§17.17.1) — servi par le SERVEUR dans /tunnel/creneaux
+  // (bloc regles). Aucune valeur en dur : repli 15 min uniquement si le serveur n'a pas répondu.
+  function pasMinutes() {
+    var r = state.config && state.config.regles;
+    var p = r && Number(r.pas_minutes);
+    return p && p > 0 ? p : 15;
+  }
+
   // Créneau transmis au backend (§17.13). Pour une demi-journée : 'matin' | 'apres_midi' ; sinon
   // undefined (la journée et les heures précises n'ont pas de créneau demi-journée). C'est cette
   // valeur — et non des heures figées — qui pilote la grille côté serveur.
@@ -197,10 +205,17 @@
       '<option value="matin"', s.demiPeriode === 'matin' ? ' selected' : '', '>Matin</option>',
       '<option value="apresmidi"', s.demiPeriode === 'apresmidi' ? ' selected' : '', '>Après-midi</option>',
       '</select></div>']) : '';
+    // §17.17.1 — le PAS des créneaux « heures précises » vient du serveur (regles.pas_minutes), jamais
+    // codé en dur : modifier sresa_horaire_pas_minutes en config se propage sans redéployer le plugin.
+    // Rendu via l'attribut step (en secondes) du champ time → le sélecteur ne propose que les minutes
+    // du pas (00/15/30/45 pour un pas de 15). Repli 15 min si /tunnel/creneaux n'a pas répondu.
+    var pasMin = pasMinutes();
+    var stepAttr = ' step="' + (pasMin * 60) + '"';
     var heureFields = s.unite === 'heure' ? h(['<div class="spr-grid-2">',
-      '<div class="spr-field"><label>Heure de début</label><input type="time" id="spr-heure-debut" value="', esc(s.heureDebut), '"></div>',
-      '<div class="spr-field"><label>Heure de fin</label><input type="time" id="spr-heure-fin" value="', esc(s.heureFin), '"></div>',
-      '</div>']) : '';
+      '<div class="spr-field"><label>Heure de début</label><input type="time"', stepAttr, ' id="spr-heure-debut" value="', esc(s.heureDebut), '"></div>',
+      '<div class="spr-field"><label>Heure de fin</label><input type="time"', stepAttr, ' id="spr-heure-fin" value="', esc(s.heureFin), '"></div>',
+      '</div>',
+      '<div class="spr-hint">Créneaux par tranches de ', pasMin, ' minutes.</div>']) : '';
 
     return h(['<div class="spr-card">',
       '<div class="spr-title">Réserver un espace</div>',
@@ -354,11 +369,20 @@
     if (op.paiement_fin_mois_disponible) {
       options.push({ value: 'sur_facture', title: 'Facture fin de mois', sub: 'Réservation confirmée immédiatement.' });
     }
-    // Message clair, dès le choix, quand le paiement en ligne n'est pas proposé pour une raison connue
-    // (ex. multi-jours) — le client comprend tout de suite que sa demande passera par notre équipe.
-    var indispoNote = (!op.paiement_en_ligne_disponible && op.paiement_en_ligne_motif === 'multi_jours')
-      ? '<div class="spr-hint">Le paiement en ligne n\'est pas disponible pour une réservation sur plusieurs jours : votre demande sera validée par notre équipe.</div>'
-      : '';
+    // §17.19 — Le POURQUOI, dès le choix. Quand le paiement en ligne n'est pas proposé, on affiche
+    // TEL QUEL le message décidé par le serveur (options-paiement → paiement_en_ligne_message) :
+    // multi-jours, créneau contesté, hors-horaires, délai court (message combiné pour hors+délai).
+    // Aucune phrase codée en dur ici ; le plugin n'invente ni ne décide (§17.14). Pour le hors-horaires,
+    // on complète avec le SURCOÛT chiffré (accès autonome) fourni par regles_horaires, s'il est non nul.
+    var indispoNote = '';
+    if (!op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
+      var reg = op.regles_horaires;
+      var surcout = '';
+      if (reg && reg.hors_horaires && reg.hors_horaires.concerne && Number(reg.hors_horaires.surcout_ht) > 0) {
+        surcout = ' Supplément d\'accès hors horaires estimé : +' + Number(reg.hors_horaires.surcout_ht).toFixed(2) + ' € HT.';
+      }
+      indispoNote = h(['<div class="spr-hint spr-hint-indispo">', esc(op.paiement_en_ligne_message), esc(surcout), '</div>']);
+    }
 
     var paymentHtml = options.map(function (o) {
       var selp = state.modePaiement === o.value;
@@ -598,9 +622,26 @@
   function chargerOptionsPaiement() {
     var montant = montantSelection();
     var nbJours = 1; // tunnel public = une seule journée / demi-journée / plage à la fois
+    // §17.17/§17.19 — on transmet la FENÊTRE (salle + jour + créneau/heures) pour que le serveur
+    // évalue hors-horaires / délai court / créneau contesté DÈS LE CHOIX, et renvoie le POURQUOI du
+    // refus de paiement en ligne. Le plugin ne décide de rien : il affiche ce que dit le serveur.
+    var s = state.search;
+    var estHeure = s.unite === 'heure';
+    var creneau = computeCreneau();
+    var jour = {
+      date_jour: s.date, unite: s.unite, creneau: creneau,
+      heure_debut: estHeure ? s.heureDebut : undefined,
+      heure_fin: estHeure ? s.heureFin : undefined,
+    };
     api('/tunnel/options-paiement', {
       method: 'POST',
-      body: JSON.stringify({ token: state.token || undefined, montant_ttc: montant, nb_jours: nbJours }),
+      body: JSON.stringify({
+        token: state.token || undefined, montant_ttc: montant, nb_jours: nbJours,
+        espace_id: state.selectedEspaceId, unite_choisie: s.unite, creneau: creneau,
+        heure_debut: estHeure ? s.heureDebut : undefined,
+        heure_fin: estHeure ? s.heureFin : undefined,
+        jours: [jour],
+      }),
     }).then(function (data) {
       state.optionsPaiement = data;
       state.identifie = !!data.identifie;
@@ -759,7 +800,12 @@
         if (!conf || !conf.publishable_key) throw new Error('Le paiement en ligne est indisponible pour le moment.');
         state.stripe = window.Stripe(conf.publishable_key);
         state.stripeElements = state.stripe.elements({ clientSecret: state.stripeClientSecret });
-        var paymentElement = state.stripeElements.create('payment');
+        // §17.19 — préremplir le formulaire carte avec ce qui a DÉJÀ été saisi à l'étape précédente
+        // (nom, email, téléphone), pour éviter une double saisie au moment le plus critique du parcours.
+        // L'adresse n'est pas collectée par le tunnel : on ne préremplit donc que ce qu'on possède.
+        var paymentElement = state.stripeElements.create('payment', {
+          defaultValues: { billingDetails: prefillBilling() },
+        });
         var mountEl = document.getElementById('spr-stripe-element');
         if (mountEl) { mountEl.innerHTML = ''; paymentElement.mount('#spr-stripe-element'); }
       })
@@ -767,6 +813,21 @@
         state.stripeMounted = false;
         stripeStatus(err.message || 'Le paiement en ligne est indisponible pour le moment.');
       });
+  }
+
+  // Valeurs de préremplissage du Payment Element (§17.19). Client anonyme : coordonnées saisies à
+  // l'étape « Paiement & coordonnées ». Client identifié : ce qu'on connaît de son profil. On ne
+  // renvoie que les champs réellement renseignés (Stripe ignore les valeurs vides/undefined).
+  function prefillBilling() {
+    var b = {};
+    var info = state.identiteInfo || {};
+    var nom = (!state.identifie ? state.contact.nom : '') || info.contact_nom || info.nom || '';
+    var email = (!state.identifie ? state.contact.email : '') || info.email || '';
+    var tel = (!state.identifie ? state.contact.telephone : '') || info.telephone || '';
+    if (nom) b.name = nom;
+    if (email) b.email = email;
+    if (tel) b.phone = tel;
+    return b;
   }
 
   function doPayer() {

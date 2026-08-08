@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -32,6 +32,19 @@ navigateur du visiteur, vers l'API S-RESA.
 * Prêt de matériel non proposé en ligne (nécessite une vérification côté S-PACE).
 
 == Changelog ==
+
+= 1.3.0 =
+* Règles horaires servies par le serveur (aucune valeur en dur dans le plugin) : le pas des créneaux
+  « heures précises » suit le réglage S-RESA (par défaut 15 minutes) ; modifier ce réglage se propage
+  sans redéployer le plugin.
+* Le POURQUOI du paiement, dès le choix : lorsque le paiement en ligne n'est pas proposé (créneau
+  hors horaires d'accueil, départ à moins du délai minimum, créneau déjà retenu, réservation
+  multi-jours), le motif décidé par le serveur est affiché immédiatement à l'étape du choix — plus de
+  découverte en fin de parcours. Créneau hors horaires : le message d'accès autonome et le supplément
+  estimé sont indiqués ; départ trop proche : message avec le numéro de téléphone. Hors-horaires ET
+  délai court se combinent en une seule phrase cohérente.
+* Formulaire de paiement par carte prérempli : nom, email et téléphone déjà saisis à l'étape
+  précédente sont repris dans le module Stripe, pour éviter une double saisie.
 
 = 1.2.0 =
 * Tarif affiché PAR SALLE : chaque espace proposé montre son propre prix, qui se recalcule à la
