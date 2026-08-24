@@ -79,6 +79,16 @@
     return Number(tarif.tarif_ttc).toFixed(2) + ' € TTC';
   }
 
+  // Montant TTC formaté à partir d'un simple nombre (plutôt que d'un objet tarif), pour afficher un
+  // total qui a déjà reçu l'addition des options — cf. fmtMontantTotal ci-dessous.
+  function fmtMontant(n) {
+    return n == null ? null : Number(n).toFixed(2) + ' € TTC';
+  }
+
+  function round2(n) {
+    return Math.round((Number(n) || 0) * 100) / 100;
+  }
+
   // ===================== SÉLECTION / TARIF PAR SALLE (§17.17.4, release v1.2.0) =====================
   // Chaque salle proposée porte SON PROPRE tarif (e.tarif, calculé à sa taille réelle côté serveur).
   // Le montant affiché suit la salle SÉLECTIONNÉE et se recalcule à chaque changement de choix. La
@@ -96,9 +106,53 @@
     return state.disponibilite ? state.disponibilite.tarif : null;
   }
 
+  // §4.9/§4.17 ext. — BUG CORRIGÉ (24/08) : ce montant ne portait QUE la salle (t.tarif_ttc), sans
+  // jamais ajouter les options choisies à l'étape 3 (pauses/restauration/aménagement) — alors que le
+  // serveur, LUI, encaisse bien salle + options (routes/tunnel.js POST /reserver, calculerOptionsReservation
+  // appelé après insertion des options, cf. lib/tarificationOptions.js). Le client payait donc le bon
+  // montant (vérifié sur WEB-223/224 : Stripe a bien débité salle+options), mais voyait un total plus
+  // bas AVANT de payer — décalage entre l'écran et la carte bancaire. Inclut désormais montantOptionsTtc().
   function montantSelection() {
     var t = tarifSelection();
-    return t && !t.erreur && t.tarif_ttc != null ? Number(t.tarif_ttc) : null;
+    if (!t || t.erreur || t.tarif_ttc == null) return null;
+    return round2(Number(t.tarif_ttc) + montantOptionsTtc());
+  }
+
+  // Montant TTC des OPTIONS sélectionnées à l'étape 3 — MÊME FORMULE que le serveur
+  // (lib/tarificationOptions.js calculerOptionsReservation) : par_personne × effectif de la ligne
+  // (pause/restauration) ou du jour (aménagement, effectif = capaciteMin recherché), forfait × 1,
+  // TVA 20 %. Une option sans prix défini dans sresa_tarifs_options compte pour 0 — ne gonfle jamais
+  // le total, exactement comme côté serveur (§ « zéro n'est pas absent », l'option reste sélectionnée
+  // et sera livrée même à 0 €). Recalculé à la volée depuis le catalogue déjà chargé (GET
+  // /tunnel/options) : aucun aller-retour serveur supplémentaire pour l'affichage.
+  function montantOptionsTtc() {
+    var cat = state.optionsCatalogue;
+    if (!cat) return 0;
+    var ht = 0;
+    Object.keys(state.selectedPauses).forEach(function (id) {
+      var qte = state.selectedPauses[id];
+      if (!qte) return;
+      var p = cat.pauses.filter(function (x) { return String(x.id) === String(id); })[0];
+      if (!p || p.prix_ht == null) return;
+      ht += Number(p.prix_ht) * (p.unite_facturation === 'par_personne' ? qte : 1);
+    });
+    if (state.selectedRestauration > 0 && cat.restauration.length && cat.restauration[0].prix_ht != null) {
+      var r = cat.restauration[0];
+      ht += Number(r.prix_ht) * (r.unite_facturation === 'par_personne' ? state.selectedRestauration : 1);
+    }
+    if (state.selectedAmenagementId) {
+      var a = cat.amenagements.filter(function (x) { return x.id === state.selectedAmenagementId; })[0];
+      if (a && a.prix_ht != null) {
+        var effectif = Number(state.search.capaciteMin) || 0;
+        ht += Number(a.prix_ht) * (a.unite_facturation === 'par_personne' ? effectif : 1);
+      }
+    }
+    return round2(ht * 1.2);
+  }
+
+  // Total formaté (salle + options), pour les étapes récap et paiement Stripe.
+  function fmtMontantTotal() {
+    return fmtMontant(montantSelection());
   }
 
   // ===================== UTILITAIRES DATE/HEURE =====================
@@ -416,7 +470,12 @@
   // ---- Étape 5 : récapitulatif ----
   function renderStepRecap() {
     var espace = espaceSelectionne();
-    var montantTtc = fmtTtc(tarifSelection());
+    // §4.9/§4.17 ext. — le total DOIT porter salle + options (bug corrigé le 24/08, cf.
+    // montantSelection). On détaille les deux lignes dès que des options sont sélectionnées, pour que
+    // le client voie explicitement ce qu'il paie en plus de la salle (jamais un total muet).
+    var salleTtc = fmtTtc(tarifSelection());
+    var optionsMontant = montantOptionsTtc();
+    var montantTtc = fmtMontantTotal();
     var modeLabels = { devis: 'Demande de devis', en_ligne: 'Paiement en ligne par carte', credit_salle: 'Crédit salle', sur_facture: 'Facture fin de mois' };
     var enLigne = state.modePaiement === 'en_ligne';
 
@@ -426,6 +485,8 @@
       '<div class="spr-recap-line"><span>Date</span><span>', formatDateFr(state.search.date), '</span></div>',
       '<div class="spr-recap-line"><span>Effectif</span><span>', esc(state.search.capaciteMin), ' personnes</span></div>',
       '<div class="spr-recap-line"><span>Paiement</span><span>', modeLabels[state.modePaiement] || state.modePaiement, '</span></div>',
+      (optionsMontant > 0 && salleTtc) ? h(['<div class="spr-recap-line"><span>Salle</span><span>', salleTtc, '</span></div>']) : '',
+      optionsMontant > 0 ? h(['<div class="spr-recap-line"><span>Options</span><span>', fmtMontant(optionsMontant), '</span></div>']) : '',
       montantTtc ? h(['<div class="spr-recap-line"><span>Montant', enLigne ? ' à régler' : ' estimé', ' TTC</span><span>', montantTtc, '</span></div>']) : '',
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour4">← Retour</button>',
@@ -461,7 +522,11 @@
 
   // ---- Étape 7 : paiement en ligne (Stripe Payment Element) ----
   function renderStepPaiementStripe() {
-    var montantTtc = fmtTtc(tarifSelection());
+    // §4.9/§4.17 ext. — même correctif qu'à l'étape récap (24/08) : le montant affiché ici DOIT être
+    // celui réellement débité par Stripe, soit salle + options (le serveur crée le PaymentIntent sur
+    // ce total, cf. routes/tunnel.js POST /reserver). Afficher la salle seule aurait laissé un écart
+    // entre ce texte et la carte bancaire du client au moment précis où il paie.
+    var montantTtc = fmtMontantTotal();
     return h(['<div class="spr-card">',
       '<div class="spr-title">Paiement sécurisé</div>',
       '<div class="spr-subtitle">', montantTtc ? ('Montant à régler : ' + montantTtc + '.') : '', ' Paiement par carte via Stripe.</div>',

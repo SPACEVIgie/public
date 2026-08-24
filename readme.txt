@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.3.1
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -32,6 +32,14 @@ navigateur du visiteur, vers l'API S-RESA.
 * Prêt de matériel non proposé en ligne (nécessite une vérification côté S-PACE).
 
 == Changelog ==
+
+= 1.3.1 =
+* Correctif — le montant affiché au récapitulatif et à l'étape de paiement par carte ne portait que
+  la salle : les options choisies (pauses, restauration, aménagement) n'étaient jamais ajoutées à
+  l'écran, alors que le serveur les facture bien (Stripe débite déjà salle + options). Le client
+  voyait donc un total plus bas que ce qui était réellement débité sur sa carte. Corrigé : le total
+  affiché inclut désormais les options, avec le détail des deux lignes (Salle / Options) au
+  récapitulatif dès qu'une option est sélectionnée.
 
 = 1.3.0 =
 * Règles horaires servies par le serveur (aucune valeur en dur dans le plugin) : le pas des créneaux
