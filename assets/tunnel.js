@@ -5,6 +5,11 @@
   var API_URL = (cfg.apiUrl || 'https://portail.s-pace.fr/sresa/api').replace(/\/$/, '');
   var PAGE_URL = cfg.pageUrl || window.location.href.split('?')[0];
   var API_KEY = cfg.apiKey || '';
+  // (24/08) Lien « Déjà client ? » à l'étape 1 — ouvre l'espace client S-RESA existant
+  // (formulaire email → lien magique, même mécanisme que l'identification à l'étape 4
+  // ci-dessous). Volontairement un lien simple vers une page déjà construite et testée,
+  // pas une réplication du formulaire d'identification dans le tunnel.
+  var ESPACE_CLIENT_URL = 'https://portail.s-pace.fr/sresa/espace-client/';
   var SNAPSHOT_KEY = 'spr_pending_snapshot';
   var STRIPE_JS = 'https://js.stripe.com/v3/';
 
@@ -271,7 +276,9 @@
       '</div>',
       '<div class="spr-hint">Créneaux par tranches de ', pasMin, ' minutes.</div>']) : '';
 
-    return h(['<div class="spr-card">',
+    var dejaClientHtml = h(['<div class="spr-already-client"><a href="', esc(ESPACE_CLIENT_URL), '" target="_blank" rel="noopener">Déjà client ? Retrouvez vos réservations</a></div>']);
+
+    return dejaClientHtml + h(['<div class="spr-card">',
       '<div class="spr-title">Réserver un espace</div>',
       '<div class="spr-subtitle">Recherchez la disponibilité d\'une salle ou d\'un bureau S-PACE.</div>',
       '<div class="spr-grid-2">',

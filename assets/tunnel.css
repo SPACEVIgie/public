@@ -124,6 +124,11 @@
 .spr-payment-option .spr-po-title { font-weight: 700; font-size: 14px; }
 .spr-payment-option .spr-po-sub { font-size: 12.5px; color: var(--spr-text-soft); margin-top: 2px; }
 
+/* Lien « Déjà client ? » — étape 1, au-dessus de la carte de recherche. */
+.spr-already-client { text-align: right; margin-bottom: 10px; font-size: 13px; }
+.spr-already-client a { color: var(--spr-bordeaux); font-weight: 600; text-decoration: none; }
+.spr-already-client a:hover { text-decoration: underline; }
+
 .spr-identify-box { border: 1px dashed var(--spr-border); border-radius: 12px; padding: 16px 18px; margin-bottom: 20px; }
 .spr-identify-box .spr-identify-title { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
 .spr-identify-box .spr-identify-sub { font-size: 12.5px; color: var(--spr-text-soft); margin-bottom: 12px; }

@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: S-PACE Réservation
- * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Consomme l'API S-RESA (bloc 9 de la spec).
- * Version: 1.3.1
+ * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Shortcode [space_mon_espace] : accès à l'espace client (lien magique par email). Consomme l'API S-RESA (bloc 9 de la spec).
+ * Version: 1.4.0
  * Author: S-PACE Business Center
  * Text Domain: space-reservation
  * Update URI: https://github.com/SPACEVIgie/public
@@ -12,7 +12,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SPACE_RESERVATION_VERSION', '1.3.1');
+define('SPACE_RESERVATION_VERSION', '1.4.0');
+// Espace client S-RESA existant (formulaire email → lien magique). Même URL que le lien
+// « Déjà client ? » de l'étape 1 du tunnel (assets/tunnel.js).
+define('SPACE_RESERVATION_ESPACE_CLIENT_URL', 'https://portail.s-pace.fr/sresa/espace-client/');
 define('SPACE_RESERVATION_OPTION_API_URL', 'space_reservation_api_url');
 define('SPACE_RESERVATION_DEFAULT_API_URL', 'https://portail.s-pace.fr/sresa/api');
 // §17.15 — clé d'API par installation. Optionnelle pendant la transition (le serveur accepte un
@@ -136,3 +139,38 @@ function space_reservation_shortcode() {
     return '<div id="space-reservation-app" class="spr-app"><div class="spr-loading">Chargement du calendrier de réservation…</div></div>';
 }
 add_shortcode('space_reservation', 'space_reservation_shortcode');
+
+/**
+ * Shortcode [space_mon_espace] (1.4.0) — carte d'accès à l'espace client S-RESA, visible
+ * hors de toute intention de réserver (page dédiée « Mon espace », menu du site). Un simple
+ * lien vers la page espace-client existante (formulaire email → lien magique, déjà en place
+ * et testée) — pas de logique dupliquée ici. Même mécanisme que le lien « Déjà client ? » de
+ * l'étape 1 du tunnel [space_reservation].
+ */
+function space_mon_espace_enqueue_assets() {
+    if (!is_singular()) {
+        return;
+    }
+    global $post;
+    if (!$post || !has_shortcode($post->post_content, 'space_mon_espace')) {
+        return;
+    }
+    wp_enqueue_style(
+        'space-mon-espace',
+        plugins_url('assets/mon-espace.css', __FILE__),
+        [],
+        SPACE_RESERVATION_VERSION
+    );
+}
+add_action('wp_enqueue_scripts', 'space_mon_espace_enqueue_assets');
+
+function space_mon_espace_shortcode() {
+    $url = esc_url(SPACE_RESERVATION_ESPACE_CLIENT_URL);
+    return '<div class="spme-card">'
+        . '<div class="spme-title">Mon espace S-PACE</div>'
+        . '<p class="spme-text">Retrouvez vos réservations, leur statut et vos demandes d\'annulation. '
+        . 'Indiquez votre email, vous recevez un lien de connexion valable 2 heures — aucun mot de passe.</p>'
+        . '<a class="spme-btn" href="' . $url . '" target="_blank" rel="noopener">Accéder à mon espace</a>'
+        . '</div>';
+}
+add_shortcode('space_mon_espace', 'space_mon_espace_shortcode');

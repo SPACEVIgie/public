@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.3.1
+Stable tag: 1.4.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -13,8 +13,9 @@ Tunnel de réservation en ligne pour S-PACE Business Center.
 
 Ajoute le shortcode `[space_reservation]` : une salle de réunion ou un bureau peut être
 réservé en ligne (recherche de disponibilité, options, devis ou paiement selon le profil
-du client). Le plugin ne stocke aucune donnée — tout transite directement, depuis le
-navigateur du visiteur, vers l'API S-RESA.
+du client). Ajoute aussi `[space_mon_espace]` : une carte d'accès à l'espace client
+(retrouver ses réservations, sans intention de réserver). Le plugin ne stocke aucune
+donnée — tout transite directement, depuis le navigateur du visiteur, vers l'API S-RESA.
 
 == Installation ==
 
@@ -23,6 +24,9 @@ navigateur du visiteur, vers l'API S-RESA.
    `https://portail.s-pace.fr/sresa/api`) et renseigner la clé d'API si S-PACE vous en a
    communiqué une (facultatif dans un premier temps).
 3. Placer le shortcode `[space_reservation]` sur la page de réservation du site.
+4. Placer le shortcode `[space_mon_espace]` sur une page dédiée (ex. « Mon espace »), et
+   ajouter cette page au menu du site si elle doit être visible en dehors du tunnel de
+   réservation.
 
 == Limites de la version actuelle ==
 
@@ -32,6 +36,14 @@ navigateur du visiteur, vers l'API S-RESA.
 * Prêt de matériel non proposé en ligne (nécessite une vérification côté S-PACE).
 
 == Changelog ==
+
+= 1.4.0 =
+* Nouveau shortcode `[space_mon_espace]` : carte d'accès à l'espace client (« Mon espace »),
+  destinée à une page dédiée du site — visible sans intention de réserver. Même mécanisme
+  d'identification que le tunnel (email → lien de connexion valable 2 heures, aucun mot de
+  passe) : un simple lien vers l'espace client S-RESA existant, aucune logique dupliquée.
+* Tunnel : lien « Déjà client ? Retrouvez vos réservations » ajouté dès l'étape 1 (Recherche)
+  — jusqu'ici l'identification n'était proposée qu'à l'étape 4 (Paiement).
 
 = 1.3.1 =
 * Correctif — le montant affiché au récapitulatif et à l'étape de paiement par carte ne portait que

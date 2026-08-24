@@ -1,0 +1,27 @@
+/* S-PACE Réservation — [space_mon_espace], namespacé .spme- pour ne rien heurter du thème hôte.
+   Palette alignée sur tunnel.css / l'espace client S-RESA (bordeaux #920157). */
+.spme-card {
+  max-width: 520px;
+  margin: 24px auto;
+  padding: 28px 30px;
+  border: 1px solid #ecd9e3;
+  border-radius: 14px;
+  background: #fdf5f9;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  box-sizing: border-box;
+}
+.spme-card * { box-sizing: border-box; }
+.spme-title { font-size: 21px; font-weight: 700; color: #920157; margin: 0 0 10px; }
+.spme-text { font-size: 14px; color: #4a3a41; line-height: 1.55; margin: 0 0 18px; }
+.spme-btn {
+  display: inline-block;
+  background: #920157;
+  border: 1px solid #920157;
+  color: #fff;
+  padding: 12px 22px;
+  border-radius: 9px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+}
+.spme-btn:hover { background: #871a58; border-color: #871a58; color: #fff; }
