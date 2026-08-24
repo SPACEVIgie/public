@@ -1,0 +1,65 @@
+/* S-PACE Réservation — [space_disponibilite], namespacé .spd- pour ne rien heurter du thème hôte.
+   Mêmes jetons que tunnel.css / mon-espace.css (palette bordeaux #920157), redéfinis ici pour que
+   ce shortcode fonctionne seul sur une page qui ne charge pas les deux autres. */
+.spd-app, .spd-erreur-config {
+  --spd-bordeaux: #920157;
+  --spd-bordeaux-hover: #871a58;
+  --spd-rose-pale: #fdf5f9;
+  --spd-text: #1E1E1E;
+  --spd-text-soft: #6b5560;
+  --spd-border: #ecd9e3;
+  --spd-border-soft: #f4e6ee;
+  --spd-info-bg: #fbf0e0;
+  --spd-info: #a8631a;
+  --spd-alert: #a4123f;
+  --spd-alert-bg: #fce9ee;
+
+  max-width: 420px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-size: 15px;
+  color: var(--spd-text);
+  box-sizing: border-box;
+}
+.spd-app *, .spd-app *::before, .spd-app *::after { box-sizing: border-box; }
+
+.spd-erreur-config {
+  padding: 12px 16px; border: 1px dashed var(--spd-alert); border-radius: 10px;
+  background: var(--spd-alert-bg); color: var(--spd-alert); font-size: 13px;
+}
+
+.spd-loading { text-align: center; padding: 20px; color: var(--spd-text-soft); font-size: 13.5px; }
+
+.spd-card {
+  background: #fff; border: 1px solid var(--spd-border-soft); border-radius: 14px; padding: 20px 22px;
+}
+
+.spd-field { margin-bottom: 14px; }
+.spd-field:last-child { margin-bottom: 0; }
+.spd-field label { display: block; font-size: 12px; font-weight: 700; color: var(--spd-text-soft); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 6px; }
+.spd-field select, .spd-field input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--spd-border); border-radius: 9px;
+  font-size: 14px; font-family: inherit; color: var(--spd-text); background: #fff;
+}
+.spd-field select:focus, .spd-field input:focus { outline: none; border-color: var(--spd-bordeaux); }
+.spd-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.spd-banner { padding: 12px 14px; border-radius: 10px; font-size: 13px; font-weight: 600; margin-top: 14px; }
+.spd-banner.spd-error { background: var(--spd-alert-bg); color: var(--spd-alert); }
+.spd-banner.spd-info { background: var(--spd-info-bg); color: var(--spd-info); }
+
+.spd-result { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--spd-border-soft); }
+.spd-result-label { font-size: 12px; font-weight: 700; color: var(--spd-text-soft); text-transform: uppercase; letter-spacing: .03em; }
+.spd-result-date { font-size: 20px; font-weight: 700; color: var(--spd-bordeaux); margin: 4px 0 2px; }
+.spd-result-tarif { font-size: 14px; color: var(--spd-text-soft); margin-bottom: 12px; }
+
+.spd-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.spd-btn {
+  font-size: 13.5px; font-weight: 600; padding: 10px 16px; border-radius: 9px;
+  border: 1px solid var(--spd-border); background: #fff; color: var(--spd-text);
+  cursor: pointer; text-decoration: none; display: inline-block;
+}
+.spd-btn:hover { border-color: var(--spd-bordeaux); background: var(--spd-rose-pale); color: var(--spd-text); }
+.spd-btn.spd-primary { background: var(--spd-bordeaux); border-color: var(--spd-bordeaux); color: #fff; }
+.spd-btn.spd-primary:hover { background: var(--spd-bordeaux-hover); border-color: var(--spd-bordeaux-hover); color: #fff; }
+.spd-btn.spd-ghost { border-color: transparent; color: var(--spd-text-soft); background: none; padding-left: 4px; padding-right: 4px; }
+.spd-hint { font-size: 12.5px; color: var(--spd-text-soft); }

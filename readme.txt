@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.4.0
+Stable tag: 1.5.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -13,9 +13,11 @@ Tunnel de réservation en ligne pour S-PACE Business Center.
 
 Ajoute le shortcode `[space_reservation]` : une salle de réunion ou un bureau peut être
 réservé en ligne (recherche de disponibilité, options, devis ou paiement selon le profil
-du client). Ajoute aussi `[space_mon_espace]` : une carte d'accès à l'espace client
-(retrouver ses réservations, sans intention de réserver). Le plugin ne stocke aucune
-donnée — tout transite directement, depuis le navigateur du visiteur, vers l'API S-RESA.
+du client). Ajoute aussi `[space_mon_espace]` : l'espace client complet, sur le site
+(email → lien reçu → liste des réservations → détail → demande d'annulation). Ajoute enfin
+`[space_disponibilite]` : sur la page d'une salle, la prochaine date libre pour une durée
+choisie. Le plugin ne stocke aucune donnée — tout transite directement, depuis le
+navigateur du visiteur, vers l'API S-RESA.
 
 == Installation ==
 
@@ -25,8 +27,13 @@ donnée — tout transite directement, depuis le navigateur du visiteur, vers l'
    communiqué une (facultatif dans un premier temps).
 3. Placer le shortcode `[space_reservation]` sur la page de réservation du site.
 4. Placer le shortcode `[space_mon_espace]` sur une page dédiée (ex. « Mon espace »), et
-   ajouter cette page au menu du site si elle doit être visible en dehors du tunnel de
-   réservation.
+   ajouter cette page au menu du site. Renseigner ensuite « URL de l'espace client » dans
+   les réglages du plugin avec l'URL de CETTE page (sinon le lien « Déjà client ? » du
+   tunnel renvoie vers l'ancien espace client, sur un autre domaine).
+5. Optionnel : placer `[space_disponibilite salle="CODE"]` sur la page d'une salle (le
+   `CODE` de la salle est visible côté équipe, écran Réglages de S-RESA), avec l'attribut
+   `tunnel="URL"` pointant vers la page du shortcode `[space_reservation]` pour que le
+   bouton « Réserver cette date » fonctionne.
 
 == Limites de la version actuelle ==
 
@@ -34,8 +41,35 @@ donnée — tout transite directement, depuis le navigateur du visiteur, vers l'
   réservation multi-jours depuis le tunnel public — une telle demande passe par l'équipe,
   sans paiement en ligne).
 * Prêt de matériel non proposé en ligne (nécessite une vérification côté S-PACE).
+* `[space_disponibilite]` ne propose jamais un jour férié (même partiellement ouvert) : une
+  réservation posée sur un férié n'est de toute façon jamais confirmée automatiquement. Ce
+  shortcode ne vérifie pas non plus les occupations Outlook/S-EDL — comme le reste du
+  tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.5.0 =
+* « Ce qui se passe sur le site reste sur le site. » `[space_mon_espace]` devient l'espace
+  client COMPLET, sur le site du client : formulaire email, lien reçu qui ramène sur CETTE
+  page (au lieu de l'espace client historique, sur un autre domaine), liste des
+  réservations, détail (dates, statut, paiement, montant TTC), demande d'annulation. Même
+  mécanisme d'identification que le tunnel (lien magique par email, aucune donnée stockée
+  par le plugin), mêmes routes API que l'ancien espace client — rien de dupliqué.
+* Le lien « Déjà client ? Retrouvez vos réservations » de l'étape 1 du tunnel pointe
+  désormais vers la page qui porte `[space_mon_espace]` (nouveau réglage « URL de l'espace
+  client »), au lieu de l'espace client historique.
+* Nouveau réglage « URL de retour du lien magique » : où le lien reçu par email ramène le
+  client. Vide par défaut (repli sur la page qui contient le shortcode — cas normal).
+* Nouveau shortcode `[space_disponibilite salle="CODE" tunnel="URL"]` : sur la page d'une
+  salle, le visiteur choisit une durée (journée / demi-journée / heures précises — les
+  mêmes que le tunnel), la prochaine date libre s'affiche avec son tarif, avec la
+  possibilité d'en voir une autre. Le bouton « Réserver cette date » bascule vers le tunnel
+  préempli (salle, date, durée). Une salle retirée de la réservation en ligne est refusée
+  par le serveur, quel que soit ce que dit le shortcode ; l'absence de disponibilité se dit
+  explicitement (jamais un formulaire vide).
+* Réglages : tableau des shortcodes disponibles, avec ce que fait chacun.
+* Tunnel : lit désormais un préremplissage optionnel dans l'URL (salle, date, durée) posé
+  par `[space_disponibilite]` — sans effet sur une utilisation normale du tunnel.
 
 = 1.4.0 =
 * Nouveau shortcode `[space_mon_espace]` : carte d'accès à l'espace client (« Mon espace »),

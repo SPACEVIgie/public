@@ -1,27 +1,94 @@
 /* S-PACE Réservation — [space_mon_espace], namespacé .spme- pour ne rien heurter du thème hôte.
-   Palette alignée sur tunnel.css / l'espace client S-RESA (bordeaux #920157). */
-.spme-card {
-  max-width: 520px;
-  margin: 24px auto;
-  padding: 28px 30px;
-  border: 1px solid #ecd9e3;
-  border-radius: 14px;
-  background: #fdf5f9;
+   Palette alignée sur tunnel.css / disponibilite.css (bordeaux #920157). Réécrit en 1.5.0 : l'espace
+   client complet (email → liste → détail → annulation) vit désormais ici, plus une simple carte-lien. */
+.spme-app {
+  --spme-bordeaux: #920157;
+  --spme-bordeaux-hover: #871a58;
+  --spme-rose-pale: #fdf5f9;
+  --spme-text: #1E1E1E;
+  --spme-text-soft: #6b5560;
+  --spme-border: #ecd9e3;
+  --spme-border-soft: #f4e6ee;
+  --spme-ok: #2f7d5c;
+  --spme-ok-bg: #e9f5ef;
+  --spme-warn: #a8631a;
+  --spme-warn-bg: #fbf0e0;
+  --spme-alert: #a4123f;
+  --spme-alert-bg: #fce9ee;
+
+  max-width: 620px;
+  margin: 0 auto;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-size: 15px;
+  color: var(--spme-text);
   box-sizing: border-box;
 }
-.spme-card * { box-sizing: border-box; }
-.spme-title { font-size: 21px; font-weight: 700; color: #920157; margin: 0 0 10px; }
-.spme-text { font-size: 14px; color: #4a3a41; line-height: 1.55; margin: 0 0 18px; }
-.spme-btn {
-  display: inline-block;
-  background: #920157;
-  border: 1px solid #920157;
-  color: #fff;
-  padding: 12px 22px;
-  border-radius: 9px;
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 14px;
+.spme-app *, .spme-app *::before, .spme-app *::after { box-sizing: border-box; }
+
+.spme-loading { text-align: center; padding: 40px 20px; color: var(--spme-text-soft); }
+
+.spme-card {
+  background: #fff;
+  border: 1px solid var(--spme-border-soft);
+  border-radius: 14px;
+  padding: 26px 28px;
 }
-.spme-btn:hover { background: #871a58; border-color: #871a58; color: #fff; }
+
+.spme-header { margin-bottom: 18px; }
+.spme-title { font-size: 21px; font-weight: 700; color: var(--spme-text); margin: 0 0 4px; }
+.spme-sub { font-size: 13px; color: var(--spme-text-soft); }
+.spme-text { font-size: 14px; color: var(--spme-text-soft); line-height: 1.55; margin: 0 0 18px; }
+
+.spme-identify-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.spme-identify-row input, .spme-email-input {
+  flex: 1; min-width: 200px; padding: 11px 13px; border: 1px solid var(--spme-border); border-radius: 9px;
+  font-size: 14.5px; font-family: inherit; color: var(--spme-text);
+}
+.spme-identify-row input:focus, .spme-email-input:focus { outline: none; border-color: var(--spme-bordeaux); }
+.spme-identify-title { font-weight: 700; font-size: 13.5px; margin-bottom: 8px; }
+
+.spme-btn {
+  font-size: 14px; font-weight: 600; padding: 11px 20px; border-radius: 9px;
+  border: 1px solid var(--spme-border); background: #fff; color: var(--spme-text);
+  cursor: pointer; text-decoration: none; display: inline-block;
+}
+.spme-btn:hover { border-color: var(--spme-bordeaux); background: var(--spme-rose-pale); }
+.spme-btn.spme-primary { background: var(--spme-bordeaux); border-color: var(--spme-bordeaux); color: #fff; }
+.spme-btn.spme-primary:hover { background: var(--spme-bordeaux-hover); border-color: var(--spme-bordeaux-hover); }
+.spme-btn.spme-ghost { border-color: transparent; color: var(--spme-text-soft); background: none; padding-left: 4px; padding-right: 4px; }
+.spme-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.spme-banner { padding: 12px 16px; border-radius: 10px; font-size: 13.5px; font-weight: 600; margin-bottom: 16px; }
+.spme-banner.spme-error { background: var(--spme-alert-bg); color: var(--spme-alert); }
+.spme-banner.spme-ok { background: var(--spme-ok-bg); color: var(--spme-ok); }
+.spme-banner.spme-info { background: var(--spme-warn-bg); color: var(--spme-warn); }
+
+.spme-resa-list { display: flex; flex-direction: column; gap: 10px; }
+.spme-resa-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 16px; border: 1.5px solid var(--spme-border); border-radius: 12px; cursor: pointer;
+}
+.spme-resa-row:hover { border-color: var(--spme-bordeaux); background: var(--spme-rose-pale); }
+.spme-resa-titre { font-weight: 700; font-size: 14.5px; }
+.spme-resa-dates { font-size: 12.5px; color: var(--spme-text-soft); margin-top: 2px; }
+.spme-resa-statuts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+.spme-badge {
+  display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 100px;
+  background: var(--spme-rose-pale); color: var(--spme-bordeaux); white-space: nowrap;
+}
+.spme-badge.spme-badge-warn { background: var(--spme-warn-bg); color: var(--spme-warn); }
+.spme-badge.spme-badge-sm { font-size: 10.5px; padding: 2px 8px; }
+
+.spme-detail-line { display: flex; justify-content: space-between; padding: 8px 0; font-size: 13.5px; border-bottom: 1px solid var(--spme-border-soft); }
+.spme-detail-line span:last-child { font-weight: 600; }
+
+.spme-jours { margin: 16px 0; border-top: 1px solid var(--spme-border-soft); padding-top: 8px; }
+.spme-jour-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; gap: 10px; }
+
+.spme-annuler-box { border: 1px dashed var(--spme-border); border-radius: 12px; padding: 16px 18px; margin-top: 8px; }
+.spme-motif {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--spme-border); border-radius: 9px;
+  font-size: 13.5px; font-family: inherit; margin-bottom: 10px; resize: vertical;
+}
+.spme-motif:focus { outline: none; border-color: var(--spme-bordeaux); }

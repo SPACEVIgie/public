@@ -5,11 +5,11 @@
   var API_URL = (cfg.apiUrl || 'https://portail.s-pace.fr/sresa/api').replace(/\/$/, '');
   var PAGE_URL = cfg.pageUrl || window.location.href.split('?')[0];
   var API_KEY = cfg.apiKey || '';
-  // (24/08) Lien « Déjà client ? » à l'étape 1 — ouvre l'espace client S-RESA existant
-  // (formulaire email → lien magique, même mécanisme que l'identification à l'étape 4
-  // ci-dessous). Volontairement un lien simple vers une page déjà construite et testée,
-  // pas une réplication du formulaire d'identification dans le tunnel.
-  var ESPACE_CLIENT_URL = 'https://portail.s-pace.fr/sresa/espace-client/';
+  // (24/08, réglé en 1.5.0) Lien « Déjà client ? » à l'étape 1 — ouvre l'espace client. Depuis la
+  // 1.5.0, c'est normalement la page du site qui porte [space_mon_espace] (réglage « URL de
+  // l'espace client », cf. s-pace-reservation.php) — le client reste sur s-pace.fr. Repli sur
+  // l'espace client S-RESA historique (autre domaine) si ce réglage est vide.
+  var ESPACE_CLIENT_URL = cfg.espaceClientUrl || 'https://portail.s-pace.fr/sresa/espace-client/';
   var SNAPSHOT_KEY = 'spr_pending_snapshot';
   var STRIPE_JS = 'https://js.stripe.com/v3/';
 
@@ -557,7 +557,10 @@
       if (byId('spr-demi')) byId('spr-demi').onchange = function (e) { state.search.demiPeriode = e.target.value; render(); };
       if (byId('spr-heure-debut')) byId('spr-heure-debut').onchange = function (e) { state.search.heureDebut = e.target.value; render(); };
       if (byId('spr-heure-fin')) byId('spr-heure-fin').onchange = function (e) { state.search.heureFin = e.target.value; render(); };
-      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = doRecherche;
+      // Fonction nommée (pas doRecherche directement) : un handler onclick reçoit le MouseEvent en
+      // 1er argument, qui atterrirait sinon dans preferCode (§1.5.0, préremplissage) — sans effet
+      // réel (aucune salle ne matche jamais un événement), mais pas la peine de compter dessus.
+      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = function () { doRecherche(); };
     } else if (state.step === 2) {
       document.querySelectorAll('input[name="spr-espace"]').forEach(function (r) {
         r.onchange = function (e) { state.selectedEspaceId = Number(e.target.value); render(); };
@@ -613,7 +616,11 @@
   }
 
   // ===================== ACTIONS =====================
-  function doRecherche() {
+  // preferCode (1.5.0, préremplissage depuis [space_disponibilite]) : code d'une salle à
+  // présélectionner dans les résultats si elle y figure — sinon repli sur le 1er résultat
+  // (comportement inchangé). La salle a pu être prise entre la recherche de dispo et l'arrivée ici :
+  // ne jamais bloquer sur ce cas, juste retomber sur le choix normal.
+  function doRecherche(preferCode) {
     var s = state.search;
     if (!s.date || !s.capaciteMin) {
       state.error = 'Merci de renseigner une date et un effectif.';
@@ -644,7 +651,8 @@
 
     api('/tunnel/disponibilite' + qs).then(function (data) {
       state.disponibilite = data;
-      state.selectedEspaceId = data.espaces.length ? data.espaces[0].id : null;
+      var prefere = preferCode ? data.espaces.filter(function (e) { return String(e.code) === String(preferCode); })[0] : null;
+      state.selectedEspaceId = prefere ? prefere.id : (data.espaces.length ? data.espaces[0].id : null);
       state.loading = false;
       state.step = 2;
       render();
@@ -950,6 +958,20 @@
     var params = new URLSearchParams(window.location.search);
     var tokenFromUrl = params.get('space_token');
 
+    // (1.5.0) Préremplissage depuis [space_disponibilite] — spr_espace/spr_date/spr_unite/
+    // spr_creneau/spr_heure_debut/spr_heure_fin/spr_capacite. Additif : en leur absence, état
+    // initial inchangé (étape 1 vide, comme avant). spr_creneau arrive au format serveur
+    // ('apres_midi') ; converti au format interne du sélecteur ('apresmidi', cf. renderStepRecherche).
+    var prefillEspaceCode = params.get('spr_espace');
+    var prefillDate = params.get('spr_date');
+    if (prefillDate) state.search.date = prefillDate;
+    if (params.get('spr_unite')) state.search.unite = params.get('spr_unite');
+    if (params.get('spr_creneau')) state.search.demiPeriode = params.get('spr_creneau') === 'apres_midi' ? 'apresmidi' : 'matin';
+    if (params.get('spr_heure_debut')) state.search.heureDebut = params.get('spr_heure_debut');
+    if (params.get('spr_heure_fin')) state.search.heureFin = params.get('spr_heure_fin');
+    if (params.get('spr_capacite')) state.search.capaciteMin = params.get('spr_capacite');
+    var pretAPreremplir = !!(prefillEspaceCode && prefillDate && state.search.capaciteMin);
+
     var afterConfig = function () {
       if (tokenFromUrl) {
         state.token = tokenFromUrl;
@@ -971,6 +993,9 @@
           } catch (e) { /* snapshot invalide, on repart de l'étape 1 */ }
         }
       }
+      // space_token prime sur le préremplissage (retour d'identification en cours de parcours) :
+      // ne jamais écraser une reprise de session par une recherche automatique.
+      if (pretAPreremplir) { doRecherche(prefillEspaceCode); return; }
       render();
     };
 
