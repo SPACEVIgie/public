@@ -140,9 +140,13 @@
       '<div class="spme-title">Mes réservations</div>',
       state.moi && state.moi.raison_sociale ? h(['<div class="spme-sub">', esc(state.moi.raison_sociale), '</div>']) : '',
       '</div>']);
+    // Erreur venue du détail (ex. réservation devenue inaccessible) : affichée ici puis effacée,
+    // pour ne pas la répéter à chaque retour sur la liste.
+    var erreurHtml = state.erreur ? h(['<div class="spme-banner spme-error">', esc(state.erreur), '</div>']) : '';
+    state.erreur = null;
 
     if (!state.reservations.length) {
-      return h(['<div class="spme-card">', entete,
+      return h(['<div class="spme-card">', entete, erreurHtml,
         '<p class="spme-text">Aucune réservation trouvée pour ce compte.</p></div>']);
     }
 
@@ -161,7 +165,7 @@
         '</div></div>']);
     }).join('');
 
-    return h(['<div class="spme-card">', entete, '<div class="spme-resa-list">', lignes, '</div></div>']);
+    return h(['<div class="spme-card">', entete, erreurHtml, '<div class="spme-resa-list">', lignes, '</div></div>']);
   }
 
   function renderDetail() {
