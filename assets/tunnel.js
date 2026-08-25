@@ -84,6 +84,14 @@
     return Number(tarif.tarif_ttc).toFixed(2) + ' € TTC';
   }
 
+  // (25/08, §4 « HT et TTC partout ») — pendant HT de fmtTtc(), toujours à partir de la même donnée
+  // serveur (tarif.tarif_ht_net, lib/tarification.js calculerTarif) : jamais déduit du TTC ici, ce
+  // serait faux dès qu'une réduction ou une TVA différente s'applique.
+  function fmtHt(tarif) {
+    if (!tarif || tarif.erreur || tarif.tarif_ht_net == null) return null;
+    return Number(tarif.tarif_ht_net).toFixed(2) + ' € HT';
+  }
+
   // Montant TTC formaté à partir d'un simple nombre (plutôt que d'un objet tarif), pour afficher un
   // total qui a déjà reçu l'addition des options — cf. fmtMontantTotal ci-dessous.
   function fmtMontant(n) {
@@ -123,14 +131,23 @@
     return round2(Number(t.tarif_ttc) + montantOptionsTtc());
   }
 
-  // Montant TTC des OPTIONS sélectionnées à l'étape 3 — MÊME FORMULE que le serveur
+  // (25/08, §4) Pendant HT de montantSelection() — MÊME donnée serveur (tarif_ht_net) + MÊME
+  // accumulation HT des options (montantOptionsHt(), ci-dessous) que le TTC : jamais un second calcul
+  // indépendant qui pourrait diverger.
+  function montantSelectionHt() {
+    var t = tarifSelection();
+    if (!t || t.erreur || t.tarif_ht_net == null) return null;
+    return round2(Number(t.tarif_ht_net) + montantOptionsHt());
+  }
+
+  // Montant HT des OPTIONS sélectionnées à l'étape 3 — MÊME FORMULE que le serveur
   // (lib/tarificationOptions.js calculerOptionsReservation) : par_personne × effectif de la ligne
-  // (pause/restauration) ou du jour (aménagement, effectif = capaciteMin recherché), forfait × 1,
-  // TVA 20 %. Une option sans prix défini dans sresa_tarifs_options compte pour 0 — ne gonfle jamais
-  // le total, exactement comme côté serveur (§ « zéro n'est pas absent », l'option reste sélectionnée
-  // et sera livrée même à 0 €). Recalculé à la volée depuis le catalogue déjà chargé (GET
-  // /tunnel/options) : aucun aller-retour serveur supplémentaire pour l'affichage.
-  function montantOptionsTtc() {
+  // (pause/restauration) ou du jour (aménagement, effectif = capaciteMin recherché), forfait × 1.
+  // Une option sans prix défini dans sresa_tarifs_options compte pour 0 — ne gonfle jamais le total,
+  // exactement comme côté serveur (§ « zéro n'est pas absent », l'option reste sélectionnée et sera
+  // livrée même à 0 €). Recalculé à la volée depuis le catalogue déjà chargé (GET /tunnel/options) :
+  // aucun aller-retour serveur supplémentaire pour l'affichage.
+  function montantOptionsHt() {
     var cat = state.optionsCatalogue;
     if (!cat) return 0;
     var ht = 0;
@@ -152,12 +169,26 @@
         ht += Number(a.prix_ht) * (a.unite_facturation === 'par_personne' ? effectif : 1);
       }
     }
-    return round2(ht * 1.2);
+    return round2(ht);
+  }
+
+  // TVA 20 % — même taux constant que le serveur applique aux options (lib/tarificationOptions.js,
+  // TVA_PCT, « alignée sur la salle »). ⚠️ Un seul taux existe aujourd'hui pour toutes les options y
+  // compris la restauration ; si un jour un taux différencié est décidé côté S-RESA, CE calcul devra
+  // suivre (note de session du 25/08 — non tranché à ce jour, le taux réellement facturé reste 20 %).
+  function montantOptionsTtc() {
+    return round2(montantOptionsHt() * 1.2);
   }
 
   // Total formaté (salle + options), pour les étapes récap et paiement Stripe.
   function fmtMontantTotal() {
     return fmtMontant(montantSelection());
+  }
+
+  // Pendant HT du total ci-dessus, formaté (25/08, §4).
+  function fmtMontantTotalHt() {
+    var n = montantSelectionHt();
+    return n == null ? null : Number(n).toFixed(2) + ' € HT';
   }
 
   // ===================== UTILITAIRES DATE/HEURE =====================
@@ -326,8 +357,14 @@
       // juste à côté (fini le « offert » : la salle réelle est facturée, décision Olivier).
       var tag = e.surclasse ? '<span class="spr-room-tag">Plus grande que votre besoin</span>' : '';
       var prixTtc = fmtTtc(e.tarif);
+      var prixHt = fmtHt(e.tarif);
+      // HT en avant / TTC en information (§4 — même hiérarchie que [space_disponibilite] et les
+      // fiches salle du site public).
       var prixHtml = prixTtc
-        ? h(['<div class="spr-room-price">', prixTtc, '</div>'])
+        ? h(['<div class="spr-room-price">',
+          prixHt ? h(['<span class="spr-room-price-ht">', prixHt, '</span>']) : '',
+          '<span class="spr-room-price-ttc">', prixTtc, '</span>',
+          '</div>'])
         : '<div class="spr-room-price spr-room-price-devis">Sur devis</div>';
       return h(['<div class="spr-room-item">',
         '<label class="spr-room-option', sel ? ' spr-selected' : '', '">',
@@ -342,9 +379,14 @@
 
     var sel = espaceSelectionne();
     var montantTtc = fmtTtc(tarifSelection());
+    var montantHt = fmtHt(tarifSelection());
     var recapSel = sel ? h(['<div class="spr-tarif-box">',
       '<span class="spr-tarif-lbl">', esc(sel.nom), sel.surclasse ? ' · plus grande que votre besoin' : '', '</span>',
-      '<span class="spr-tarif-val">', montantTtc || 'Sur devis', '</span>',
+      '<span class="spr-tarif-val">',
+      montantTtc
+        ? h([montantHt ? h(['<span class="spr-tarif-ht-inline">', esc(montantHt), ' · </span>']) : '', esc(montantTtc)])
+        : 'Sur devis',
+      '</span>',
       '</div>']) : '';
 
     return h(['<div class="spr-card">',
@@ -372,23 +414,30 @@
     var cat = state.optionsCatalogue;
     if (!cat) return '<div class="spr-card spr-loading">Chargement des options…</div>';
 
+    // (25/08, §4) TTC affiché en information à côté du HT — même taux 20 % que
+    // montantOptionsTtc() ci-dessus (constante partagée, voir sa note sur l'absence de taux
+    // différencié à ce jour).
+    var ttcOption = function (prixHt) { return (Number(prixHt) * 1.2).toFixed(2) + ' € TTC'; };
+
     var pausesHtml = cat.pauses.length ? cat.pauses.map(function (p) {
       var qty = state.selectedPauses[p.id] || 0;
       return h(['<div class="spr-option-row"><div><div class="spr-option-name">', esc(p.nom), '</div>',
-        '<div class="spr-option-price">', Number(p.prix_ht).toFixed(2), ' € HT / personne</div></div>',
+        '<div class="spr-option-price">', Number(p.prix_ht).toFixed(2), ' € HT',
+        ' <span class="spr-option-price-ttc">(', ttcOption(p.prix_ht), ')</span> / personne</div></div>',
         '<div class="spr-qty"><button class="spr-qty-minus" data-pause="', p.id, '">−</button><span>', qty, '</span><button class="spr-qty-plus" data-pause="', p.id, '">+</button></div>',
         '</div>']);
     }).join('') : '<div class="spr-subtitle">Aucune pause disponible.</div>';
 
     var restauRow = cat.restauration.length ? h(['<div class="spr-option-row"><div><div class="spr-option-name">Plateau repas</div>',
-      '<div class="spr-option-price">', Number(cat.restauration[0].prix_ht).toFixed(2), ' € HT / personne</div></div>',
+      '<div class="spr-option-price">', Number(cat.restauration[0].prix_ht).toFixed(2), ' € HT',
+      ' <span class="spr-option-price-ttc">(', ttcOption(cat.restauration[0].prix_ht), ')</span> / personne</div></div>',
       '<div class="spr-qty"><button id="spr-restau-minus">−</button><span>', state.selectedRestauration, '</span><button id="spr-restau-plus">+</button></div>',
       '</div>']) : '';
 
     var amenagementHtml = cat.amenagements.length ? h(['<div class="spr-field"><label>Aménagement</label><select id="spr-amenagement">',
       '<option value="">Aucun</option>',
       cat.amenagements.map(function (a) {
-        return '<option value="' + a.id + '"' + (state.selectedAmenagementId === a.id ? ' selected' : '') + '>' + esc(a.nom) + ' (+' + Number(a.prix_ht).toFixed(2) + ' € HT)</option>';
+        return '<option value="' + a.id + '"' + (state.selectedAmenagementId === a.id ? ' selected' : '') + '>' + esc(a.nom) + ' (+' + Number(a.prix_ht).toFixed(2) + ' € HT / +' + ttcOption(a.prix_ht) + ')</option>';
       }).join(''),
       '</select></div>']) : '';
 
@@ -483,6 +532,9 @@
     var salleTtc = fmtTtc(tarifSelection());
     var optionsMontant = montantOptionsTtc();
     var montantTtc = fmtMontantTotal();
+    // §4 « à l'écran de paiement, le TTC reste dominant, le HT en information » — cette étape
+    // précède l'envoi/le paiement (mode déjà choisi) : même hiérarchie qu'à l'étape 7 ci-dessous.
+    var montantHt = fmtMontantTotalHt();
     var modeLabels = { devis: 'Demande de devis', en_ligne: 'Paiement en ligne par carte', credit_salle: 'Crédit salle', sur_facture: 'Facture fin de mois' };
     var enLigne = state.modePaiement === 'en_ligne';
 
@@ -494,7 +546,8 @@
       '<div class="spr-recap-line"><span>Paiement</span><span>', modeLabels[state.modePaiement] || state.modePaiement, '</span></div>',
       (optionsMontant > 0 && salleTtc) ? h(['<div class="spr-recap-line"><span>Salle</span><span>', salleTtc, '</span></div>']) : '',
       optionsMontant > 0 ? h(['<div class="spr-recap-line"><span>Options</span><span>', fmtMontant(optionsMontant), '</span></div>']) : '',
-      montantTtc ? h(['<div class="spr-recap-line"><span>Montant', enLigne ? ' à régler' : ' estimé', ' TTC</span><span>', montantTtc, '</span></div>']) : '',
+      montantTtc ? h(['<div class="spr-recap-line spr-recap-total"><span>Montant', enLigne ? ' à régler' : ' estimé', ' TTC</span><span>', montantTtc, '</span></div>']) : '',
+      montantHt ? h(['<div class="spr-recap-line spr-recap-ht-info"><span>dont HT</span><span>', montantHt, '</span></div>']) : '',
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour4">← Retour</button>',
       '<button class="spr-btn spr-primary" id="spr-btn-envoyer"', state.loading ? ' disabled' : '', '>',
@@ -534,9 +587,14 @@
     // ce total, cf. routes/tunnel.js POST /reserver). Afficher la salle seule aurait laissé un écart
     // entre ce texte et la carte bancaire du client au moment précis où il paie.
     var montantTtc = fmtMontantTotal();
+    // §4 « à l'écran de PAIEMENT, le TTC reste dominant, le HT en information » — c'est le montant
+    // réellement débité par la carte que le client doit lire en premier.
+    var montantHt = fmtMontantTotalHt();
     return h(['<div class="spr-card">',
       '<div class="spr-title">Paiement sécurisé</div>',
-      '<div class="spr-subtitle">', montantTtc ? ('Montant à régler : ' + montantTtc + '.') : '', ' Paiement par carte via Stripe.</div>',
+      '<div class="spr-subtitle">', montantTtc ? ('Montant à régler : ' + montantTtc + '.') : '',
+      montantHt ? h([' <span class="spr-montant-ht-info">(dont ', montantHt, ')</span>']) : '',
+      ' Paiement par carte via Stripe.</div>',
       '<div id="spr-stripe-element" class="spr-stripe-element"><div class="spr-loading">Chargement du module de paiement…</div></div>',
       '<div id="spr-stripe-status" class="spr-stripe-status"></div>',
       '<div class="spr-actions">',

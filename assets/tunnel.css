@@ -87,7 +87,11 @@
 .spr-room-option .spr-room-name { font-weight: 700; font-size: 15px; }
 .spr-room-option .spr-room-tag { font-size: 11.5px; color: var(--spr-warn); background: var(--spr-warn-bg); padding: 2px 8px; border-radius: 100px; font-weight: 700; margin-left: 8px; white-space: nowrap; }
 .spr-room-option .spr-room-cap { font-size: 12.5px; color: var(--spr-text-soft); margin-top: 2px; }
-.spr-room-option .spr-room-price { flex-shrink: 0; font-weight: 700; font-size: 15px; color: var(--spr-bordeaux); text-align: right; white-space: nowrap; }
+/* HT en avant / TTC en information (§4, 25/08 — même hiérarchie que [space_disponibilite] et les
+   fiches salle du site public). */
+.spr-room-option .spr-room-price { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; text-align: right; white-space: nowrap; }
+.spr-room-option .spr-room-price-ht { font-weight: 700; font-size: 15px; color: var(--spr-bordeaux); }
+.spr-room-option .spr-room-price-ttc { font-weight: 500; font-size: 11.5px; color: var(--spr-text-soft); }
 .spr-room-option .spr-room-price-devis { font-weight: 600; font-size: 13px; color: var(--spr-text-soft); }
 .spr-room-fiche { display: inline-block; margin: 4px 0 0 42px; font-size: 12.5px; font-weight: 600; color: var(--spr-bordeaux); text-decoration: none; }
 .spr-room-fiche:hover { text-decoration: underline; }
@@ -99,6 +103,7 @@
 }
 .spr-tarif-box .spr-tarif-lbl { font-size: 13px; color: var(--spr-text-soft); font-weight: 600; }
 .spr-tarif-box .spr-tarif-val { font-size: 24px; font-weight: 700; color: var(--spr-bordeaux); }
+.spr-tarif-box .spr-tarif-ht-inline { font-size: 14px; font-weight: 500; color: var(--spr-text-soft); }
 
 .spr-option-row {
   display: flex; align-items: center; justify-content: space-between; padding: 12px 0;
@@ -107,6 +112,7 @@
 .spr-option-row:last-child { border-bottom: none; }
 .spr-option-row .spr-option-name { font-weight: 600; font-size: 14px; }
 .spr-option-row .spr-option-price { font-size: 12.5px; color: var(--spr-text-soft); }
+.spr-option-row .spr-option-price-ttc { color: var(--spr-text-soft); opacity: .75; }
 .spr-option-row .spr-qty { display: flex; align-items: center; gap: 8px; }
 .spr-option-row .spr-qty button {
   width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--spr-border); background: #fff;
@@ -142,6 +148,13 @@
 .spr-recap-line { display: flex; justify-content: space-between; padding: 8px 0; font-size: 13.5px; border-bottom: 1px solid var(--spr-border-soft); }
 .spr-recap-line:last-child { border-bottom: none; }
 .spr-recap-line span:last-child { font-weight: 600; text-align: right; }
+/* §4 — le TTC (spr-recap-total) reste le montant dominant à cette étape ; le HT (spr-recap-ht-info,
+   juste en dessous) n'est qu'une information secondaire, jamais en avant. */
+.spr-recap-line.spr-recap-total { font-size: 15px; }
+.spr-recap-line.spr-recap-total span:last-child { color: var(--spr-bordeaux); }
+.spr-recap-line.spr-recap-ht-info { font-size: 12px; color: var(--spr-text-soft); padding-top: 0; }
+.spr-recap-line.spr-recap-ht-info span:last-child { font-weight: 500; color: var(--spr-text-soft); }
+.spr-montant-ht-info { font-weight: 400; opacity: .8; }
 
 .spr-confirm-icon { width: 56px; height: 56px; border-radius: 50%; background: var(--spr-ok-bg); color: var(--spr-ok); display: flex; align-items: center; justify-content: center; font-size: 26px; margin: 0 auto 16px; }
 .spr-confirm-box { text-align: center; padding: 20px 10px; }
