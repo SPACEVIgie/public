@@ -50,7 +50,16 @@
 .spd-result { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--spd-border-soft); }
 .spd-result-label { font-size: 12px; font-weight: 700; color: var(--spd-text-soft); text-transform: uppercase; letter-spacing: .03em; }
 .spd-result-date { font-size: 20px; font-weight: 700; color: var(--spd-bordeaux); margin: 4px 0 2px; }
-.spd-result-tarif { font-size: 14px; color: var(--spd-text-soft); margin-bottom: 12px; }
+.spd-result-tarif { margin-bottom: 12px; }
+/* HT en avant / TTC en information (§4 — hiérarchie reprise des fiches salle du site public, qui
+   affichent le HT en avant sur leurs cartes tarifaires). Le TTC reste toujours visible. */
+.spd-tarif-ht { display: block; font-size: 16px; font-weight: 700; color: var(--spd-text); }
+.spd-tarif-ttc { display: block; font-size: 12.5px; color: var(--spd-text-soft); margin-top: 1px; }
+
+.spd-duree-unique {
+  padding: 10px 12px; border: 1px solid var(--spd-border-soft); border-radius: 9px;
+  font-size: 14px; background: var(--spd-rose-pale); color: var(--spd-text);
+}
 
 .spd-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
 .spd-btn {
@@ -63,3 +72,34 @@
 .spd-btn.spd-primary:hover { background: var(--spd-bordeaux-hover); border-color: var(--spd-bordeaux-hover); color: #fff; }
 .spd-btn.spd-ghost { border-color: transparent; color: var(--spd-text-soft); background: none; padding-left: 4px; padding-right: 4px; }
 .spd-hint { font-size: 12.5px; color: var(--spd-text-soft); }
+
+/* Calendrier (§4.3) — « Voir une autre date » ouvre ce panneau plutôt que d'avancer jour par jour. */
+.spd-cal-retour {
+  border: none; background: none; padding: 0; margin-bottom: 10px; color: var(--spd-text-soft);
+  font-size: 12.5px; cursor: pointer; display: block;
+}
+.spd-cal-retour:hover { color: var(--spd-bordeaux); }
+.spd-cal-sous-titre { font-size: 12px; font-weight: 700; color: var(--spd-text-soft); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 10px; }
+.spd-cal-mois-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.spd-cal-titre { font-size: 14px; font-weight: 700; color: var(--spd-text); text-transform: capitalize; }
+.spd-cal-nav {
+  border: 1px solid var(--spd-border); background: #fff; border-radius: 7px; width: 28px; height: 28px;
+  cursor: pointer; color: var(--spd-text); font-size: 15px; line-height: 1; padding: 0;
+}
+.spd-cal-nav:hover:not(:disabled) { border-color: var(--spd-bordeaux); color: var(--spd-bordeaux); }
+.spd-cal-nav:disabled { opacity: .35; cursor: default; }
+.spd-cal-entetesem { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: 11px; font-weight: 700; color: var(--spd-text-soft); margin-bottom: 4px; }
+.spd-cal-grille { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.spd-cal-cell {
+  aspect-ratio: 1; border-radius: 7px; border: 1px solid transparent; font-size: 12.5px;
+  display: flex; align-items: center; justify-content: center; background: none;
+  color: var(--spd-text-soft); font-family: inherit; padding: 0;
+}
+.spd-cal-vide { visibility: hidden; }
+.spd-cal-dispo { background: var(--spd-rose-pale); border-color: var(--spd-border); color: var(--spd-bordeaux); font-weight: 600; cursor: pointer; }
+.spd-cal-dispo:hover { background: var(--spd-bordeaux); border-color: var(--spd-bordeaux); color: #fff; }
+.spd-cal-indispo { background: #f5f2f3; color: #c8bcc2; text-decoration: line-through; }
+.spd-cal-legende { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--spd-text-soft); margin-top: 12px; }
+.spd-cal-puce { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+.spd-cal-puce-dispo { background: var(--spd-rose-pale); border: 1px solid var(--spd-bordeaux); }
+.spd-cal-puce-indispo { background: #f5f2f3; margin-left: 10px; }

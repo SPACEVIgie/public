@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.6.0
+Stable tag: 1.7.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -51,6 +51,25 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.7.0 =
+* `[space_disponibilite]` : les durées proposées (journée / demi-journée / heures précises)
+  sont désormais UNIQUEMENT celles que la salle accepte réellement (réglage S-RESA, ex.
+  certaines salles n'acceptent pas la réservation à l'heure) — le widget ne proposait
+  jusqu'ici aucun filtre et laissait choisir une durée que la salle refuse. Une seule durée
+  acceptée → elle est annoncée, sans sélecteur à un seul choix.
+* `[space_disponibilite]` : le bouton « Réserver cette date » s'affiche désormais aussi sans
+  l'attribut `tunnel` sur le shortcode, en reprenant le réglage global « URL de la page de
+  réservation » (posé en 1.6.0) — jusqu'ici ce réglage n'était lu que par
+  `[space_mon_espace]`. Toujours aucune destination devinée si rien n'est réglé nulle part.
+* `[space_disponibilite]` : « Voir une autre date » ouvre désormais un mini calendrier du
+  mois (dates disponibles et indisponibles visibles, fermetures et jours fériés compris),
+  plutôt que de faire défiler les dates une par une.
+* `[space_disponibilite]` : le prix affiché porte désormais le HT et le TTC (jusqu'ici seul
+  le TTC apparaissait).
+* Correctif serveur associé (API S-RESA, hors ce plugin) : le tunnel refuse désormais
+  explicitement une réservation sur une durée que la salle n'accepte pas, au lieu de
+  dépendre d'un effet de bord de la grille tarifaire.
 
 = 1.6.0 =
 * Réglages : nouvelle section « Salles réservables » — nom, code et shortcode

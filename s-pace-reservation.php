@@ -2,7 +2,7 @@
 /**
  * Plugin Name: S-PACE Réservation
  * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Shortcode [space_mon_espace] : espace client complet, sur le site (email → lien → réservations), avec bouton « Nouvelle réservation » vers le tunnel. Shortcode [space_disponibilite] : prochaine date libre d'une salle. Page de réglages : liste des salles réservables avec shortcode prêt à copier. Consomme l'API S-RESA (bloc 9 de la spec).
- * Version: 1.6.0
+ * Version: 1.7.0
  * Author: S-PACE Business Center
  * Text Domain: space-reservation
  * Update URI: https://github.com/SPACEVIgie/public
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SPACE_RESERVATION_VERSION', '1.6.0');
+define('SPACE_RESERVATION_VERSION', '1.7.0');
 // Espace client S-RESA HISTORIQUE (portail Vigie, autre domaine) — repli UNIQUEMENT : n'est plus
 // utilisé quand SPACE_RESERVATION_OPTION_ESPACE_CLIENT_URL (réglage ci-dessous) est renseigné.
 // Conservé pour ne rien casser tant qu'Olivier n'a pas créé la page « Mon espace » du site.
@@ -137,7 +137,7 @@ function space_reservation_liste_shortcodes() {
         ],
         [
             'shortcode' => '[space_disponibilite salle="CODE" tunnel="https://…/reserver/"]',
-            'role' => "Sur la page d'une salle : le visiteur choisit une durée, la prochaine date libre s'affiche (« Voir une autre date » pour la suivante), avec un lien vers le tunnel préempli.",
+            'role' => "Sur la page d'une salle : le visiteur choisit une durée parmi celles que la salle accepte, la prochaine date libre s'affiche en HT et TTC, avec un calendrier (« Voir un calendrier ») et un bouton « Réserver » vers le tunnel préempli — l'attribut tunnel est facultatif si « URL de la page de réservation » est renseignée ci-dessous.",
         ],
     ];
 }
@@ -393,8 +393,18 @@ add_shortcode('space_mon_espace', 'space_mon_espace_shortcode');
  * bouton « Réserver cette date » bascule vers le tunnel, préempli (query string spr_*, lus par
  * assets/tunnel.js). `salle` = code de l'espace (ex. « PE03 », visible dans Réglages S-RESA côté
  * équipe) — pas le nom affiché, qui peut changer. `tunnel` = URL de la page qui porte
- * [space_reservation] ; sans cet attribut, la prochaine dispo s'affiche quand même mais sans
- * bouton « Réserver » (le shortcode ne DEVINE pas où se trouve le tunnel).
+ * [space_reservation] ; SANS cet attribut, repli sur le réglage global « URL de la page de
+ * réservation » (SPACE_RESERVATION_OPTION_RESERVATION_URL, posé en v1.6.0 pour [space_mon_espace] —
+ * jusqu'ici ce shortcode-ci ne le lisait pas du tout : le bouton « Réserver » restait invisible sur
+ * toute page n'ayant PAS l'attribut `tunnel`, alors même que la destination était déjà connue).
+ * Seule l'ABSENCE des deux (attribut ET réglage) laisse le bouton non affiché (le shortcode ne
+ * DEVINE toujours pas une destination — jamais un bouton mort, §4.2).
+ *
+ * (25/08, §4.1) Les durées proposées (journée / demi-journée / heures précises) sont désormais
+ * celles que LA SALLE accepte réellement (espaces.unites_autorisees, GET
+ * /tunnel/prochaine-disponibilite) — le widget ne les devine plus toutes les 3 par défaut.
+ * (25/08, §4.3) « Voir une autre date » ouvre un mini calendrier (GET /tunnel/disponibilite-mois,
+ * un appel par mois affiché) plutôt que de faire défiler jour par jour.
  */
 function space_disponibilite_enqueue_assets() {
     if (!is_singular()) {
@@ -417,7 +427,13 @@ function space_disponibilite_enqueue_assets() {
         SPACE_RESERVATION_VERSION,
         true
     );
-    wp_localize_script('space-disponibilite', 'SpaceDispoConfig', space_reservation_config_commune());
+    $cfg = space_reservation_config_commune();
+    // (25/08) reservationUrl : repli du bouton « Réserver » quand le shortcode ne porte pas
+    // l'attribut `tunnel` — même réglage, même repli « vide → pas de bouton » que
+    // space_mon_espace_enqueue_assets() ci-dessus (aucune destination devinée).
+    $reservationUrl = trim((string) get_option(SPACE_RESERVATION_OPTION_RESERVATION_URL, ''));
+    $cfg['reservationUrl'] = $reservationUrl !== '' ? $reservationUrl : '';
+    wp_localize_script('space-disponibilite', 'SpaceDispoConfig', $cfg);
 }
 add_action('wp_enqueue_scripts', 'space_disponibilite_enqueue_assets');
 
