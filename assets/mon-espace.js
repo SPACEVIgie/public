@@ -89,8 +89,13 @@
     return d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear();
   }
 
-  function fmtMontant(n) {
-    return n == null ? null : Number(n).toFixed(2) + ' € TTC';
+  // (25/08, §4) TTC toujours affiché ; HT en information QUAND il est fiable. Un montant_ttc
+  // MANUEL (staff, cf. précédent du 16/08 — « le miroir HT/TTC n'était pas un bug, le tarif était
+  // manuel ») n'a pas de contrepartie HT fiable : mieux vaut alors ne montrer QUE le TTC que
+  // d'afficher un HT halluciné à côté d'un montant qu'il ne recalcule plus.
+  function fmtMontant(ttc, ht) {
+    if (ttc == null) return null;
+    return { ttc: Number(ttc).toFixed(2) + ' € TTC', ht: ht != null ? Number(ht).toFixed(2) + ' € HT' : null };
   }
 
   // ===================== RENDU =====================
@@ -197,7 +202,8 @@
         '</div>']);
     }).join('');
 
-    var montant = fmtMontant(d.montant_ttc != null ? d.montant_ttc : d.tarif_ttc);
+    var montantManuel = d.montant_ttc != null; // cf. fmtMontant ci-dessus
+    var montant = fmtMontant(montantManuel ? d.montant_ttc : d.tarif_ttc, montantManuel ? null : d.tarif_ht_net);
     var peutAnnuler = d.statut_annulation === 'active' && d.statut_reservation !== 'annulee';
 
     var blocAnnulation = '';
@@ -223,7 +229,9 @@
       state.erreur ? h(['<div class="spme-banner spme-error">', esc(state.erreur), '</div>']) : '',
       '<div class="spme-detail-line"><span>Statut</span><span>', esc(LABELS_RESERVATION[d.statut_reservation] || d.statut_reservation), '</span></div>',
       '<div class="spme-detail-line"><span>Paiement</span><span>', esc(LABELS_PAIEMENT[d.statut_paiement] || d.statut_paiement || '—'), '</span></div>',
-      montant ? h(['<div class="spme-detail-line"><span>Montant TTC</span><span>', montant, '</span></div>']) : '',
+      montant ? h(['<div class="spme-detail-line"><span>Montant</span><span>',
+        montant.ht ? h(['<span class="spme-montant-ht">', montant.ht, '</span> · ']) : '',
+        montant.ttc, '</span></div>']) : '',
       '<div class="spme-jours">', jours, '</div>',
       blocAnnulation,
       '</div>']);

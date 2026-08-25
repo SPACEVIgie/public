@@ -82,6 +82,7 @@
 
 .spme-detail-line { display: flex; justify-content: space-between; padding: 8px 0; font-size: 13.5px; border-bottom: 1px solid var(--spme-border-soft); }
 .spme-detail-line span:last-child { font-weight: 600; }
+.spme-montant-ht { font-weight: 400; color: var(--spme-text-soft); }
 
 .spme-jours { margin: 16px 0; border-top: 1px solid var(--spme-border-soft); padding-top: 8px; }
 .spme-jour-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; gap: 10px; }
