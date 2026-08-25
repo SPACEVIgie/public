@@ -15,6 +15,10 @@
   // (1.5.0) URL de retour du lien magique — réglage « URL de retour du lien magique » (vide →
   // repli sur cette page elle-même, cf. s-pace-reservation.php space_reservation_config_commune()).
   var RETURN_URL = cfg.magicReturnUrl || PAGE_URL;
+  // (1.6.0) Bouton « Nouvelle réservation » → réglage « URL de la page de réservation ». Vide →
+  // pas de bouton (cf. s-pace-reservation.php space_mon_espace_enqueue_assets() : pas de
+  // destination devinée, une URL fausse enverrait le client sur une page 404).
+  var RESERVATION_URL = cfg.reservationUrl || '';
 
   var root = document.getElementById('space-mon-espace-app');
   if (!root) return;
@@ -135,10 +139,24 @@
       '</div></div>']);
   }
 
+  // Lien vers le tunnel de réservation, IDENTIFIÉ : le token qui a ouvert cet espace (lien magique,
+  // valable 2 heures) est repassé en ?space_token= — tunnel.js le lit au chargement (même paramètre,
+  // même resoudreCompte() côté serveur) et le client n'a pas à redonner son email. Cf. réglage
+  // « URL de la page de réservation ».
+  function lienNouvelleReservation() {
+    if (!RESERVATION_URL) return null;
+    var sep = RESERVATION_URL.indexOf('?') >= 0 ? '&' : '?';
+    return RESERVATION_URL + sep + 'space_token=' + encodeURIComponent(state.token);
+  }
+
   function renderListe() {
+    var lienResa = lienNouvelleReservation();
     var entete = h(['<div class="spme-header">',
+      '<div>',
       '<div class="spme-title">Mes réservations</div>',
       state.moi && state.moi.raison_sociale ? h(['<div class="spme-sub">', esc(state.moi.raison_sociale), '</div>']) : '',
+      '</div>',
+      lienResa ? h(['<a class="spme-btn spme-primary" href="', esc(lienResa), '">+ Nouvelle réservation</a>']) : '',
       '</div>']);
     // Erreur venue du détail (ex. réservation devenue inaccessible) : affichée ici puis effacée,
     // pour ne pas la répéter à chaque retour sur la liste.

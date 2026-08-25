@@ -34,7 +34,7 @@
   padding: 26px 28px;
 }
 
-.spme-header { margin-bottom: 18px; }
+.spme-header { margin-bottom: 18px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .spme-title { font-size: 21px; font-weight: 700; color: var(--spme-text); margin: 0 0 4px; }
 .spme-sub { font-size: 13px; color: var(--spme-text-soft); }
 .spme-text { font-size: 14px; color: var(--spme-text-soft); line-height: 1.55; margin: 0 0 18px; }

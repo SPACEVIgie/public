@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: S-PACE Réservation
- * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Shortcode [space_mon_espace] : espace client complet, sur le site (email → lien → réservations). Shortcode [space_disponibilite] : prochaine date libre d'une salle. Consomme l'API S-RESA (bloc 9 de la spec).
- * Version: 1.5.0
+ * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Shortcode [space_mon_espace] : espace client complet, sur le site (email → lien → réservations), avec bouton « Nouvelle réservation » vers le tunnel. Shortcode [space_disponibilite] : prochaine date libre d'une salle. Page de réglages : liste des salles réservables avec shortcode prêt à copier. Consomme l'API S-RESA (bloc 9 de la spec).
+ * Version: 1.6.0
  * Author: S-PACE Business Center
  * Text Domain: space-reservation
  * Update URI: https://github.com/SPACEVIgie/public
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SPACE_RESERVATION_VERSION', '1.5.0');
+define('SPACE_RESERVATION_VERSION', '1.6.0');
 // Espace client S-RESA HISTORIQUE (portail Vigie, autre domaine) — repli UNIQUEMENT : n'est plus
 // utilisé quand SPACE_RESERVATION_OPTION_ESPACE_CLIENT_URL (réglage ci-dessous) est renseigné.
 // Conservé pour ne rien casser tant qu'Olivier n'a pas créé la page « Mon espace » du site.
@@ -33,6 +33,10 @@ define('SPACE_RESERVATION_OPTION_API_KEY', 'space_reservation_api_key');
 //     renseigner seulement si cette page n'est pas la bonne URL canonique (proxy, AMP…).
 define('SPACE_RESERVATION_OPTION_ESPACE_CLIENT_URL', 'space_reservation_espace_client_url');
 define('SPACE_RESERVATION_OPTION_MAGIC_RETURN_URL', 'space_reservation_magic_return_url');
+// (1.6.0) URL de la page qui porte [space_reservation] — sert au bouton « Nouvelle réservation »
+// affiché dans [space_mon_espace]. Vide → le bouton ne s'affiche PAS (pas de destination devinée :
+// une URL fausse enverrait le client sur une page 404, un bouton absent ne casse rien).
+define('SPACE_RESERVATION_OPTION_RESERVATION_URL', 'space_reservation_reservation_url');
 
 /**
  * Mises à jour automatiques depuis les Releases du dépôt public GitHub SPACEVIgie/public.
@@ -68,8 +72,45 @@ function space_reservation_register_settings() {
         'sanitize_callback' => 'esc_url_raw',
         'default' => '',
     ]);
+    register_setting('space_reservation', SPACE_RESERVATION_OPTION_RESERVATION_URL, [
+        'type' => 'string',
+        'sanitize_callback' => 'esc_url_raw',
+        'default' => '',
+    ]);
 }
 add_action('admin_init', 'space_reservation_register_settings');
+
+/**
+ * (1.6.0) Liste des espaces RÉSERVABLES, lue EN DIRECT sur l'API S-RESA (GET /tunnel/espaces —
+ * jamais une liste saisie en dur ici : « les bureaux restent réservables, mais ça change dans le
+ * temps », décision Olivier). Sert la section « Salles » de la page de réglages, pour qu'Olivier
+ * n'ait pas besoin d'aller chercher un code d'espace ailleurs pour écrire un shortcode
+ * [space_disponibilite]. Retourne soit la liste (array), soit WP_Error/null si l'API n'a pas
+ * répondu correctement — DISTINGUÉ explicitement d'une liste vide, jamais confondu avec elle.
+ */
+function space_reservation_recuperer_espaces_reservables() {
+    $api_url = untrailingslashit(get_option(SPACE_RESERVATION_OPTION_API_URL, SPACE_RESERVATION_DEFAULT_API_URL));
+    $api_key = (string) get_option(SPACE_RESERVATION_OPTION_API_KEY, '');
+    $headers = [];
+    if ($api_key !== '') {
+        $headers['X-Space-Api-Key'] = $api_key;
+    }
+    $response = wp_remote_get($api_url . '/tunnel/espaces', [
+        'timeout' => 6,
+        'headers' => $headers,
+    ]);
+    if (is_wp_error($response)) {
+        return null;
+    }
+    if (wp_remote_retrieve_response_code($response) !== 200) {
+        return null;
+    }
+    $data = json_decode(wp_remote_retrieve_body($response), true);
+    if (!is_array($data) || !isset($data['espaces']) || !is_array($data['espaces'])) {
+        return null;
+    }
+    return $data['espaces'];
+}
 
 function space_reservation_add_settings_page() {
     add_options_page(
@@ -92,7 +133,7 @@ function space_reservation_liste_shortcodes() {
         ],
         [
             'shortcode' => '[space_mon_espace]',
-            'role' => "L'espace client complet, sur le site : email → lien reçu → liste des réservations → détail → demande d'annulation. À placer sur une page dédiée (ex. « Mon espace »).",
+            'role' => "L'espace client complet, sur le site : email → lien reçu → liste des réservations → détail → demande d'annulation, avec un bouton « Nouvelle réservation » (si l'URL de la page de réservation est renseignée ci-dessous). À placer sur une page dédiée (ex. « Mon espace »).",
         ],
         [
             'shortcode' => '[space_disponibilite salle="CODE" tunnel="https://…/reserver/"]',
@@ -156,6 +197,19 @@ function space_reservation_render_settings_page() {
                         où cette page n'est pas la bonne URL (par ex. le shortcode est servi via une page miroir).</p>
                     </td>
                 </tr>
+                <tr>
+                    <th scope="row"><label for="space_reservation_reservation_url">URL de la page de réservation</label></th>
+                    <td>
+                        <input type="url" id="space_reservation_reservation_url" name="<?php echo esc_attr(SPACE_RESERVATION_OPTION_RESERVATION_URL); ?>"
+                               value="<?php echo esc_attr(get_option(SPACE_RESERVATION_OPTION_RESERVATION_URL, '')); ?>"
+                               class="regular-text" placeholder="https://s-pace.fr/reserver/">
+                        <p class="description">L'URL de la page qui porte le shortcode <code>[space_reservation]</code> — c'est là que mène
+                        le bouton « Nouvelle réservation » affiché dans <code>[space_mon_espace]</code>, le client y arrive
+                        toujours identifié (pas besoin de redonner son email). <strong>Si ce champ est vide, le bouton ne
+                        s'affiche pas</strong> (plutôt qu'une destination devinée, potentiellement fausse). Renseignez-le dès
+                        que la page « Réserver » du site existe.</p>
+                    </td>
+                </tr>
             </table>
             <?php submit_button(); ?>
         </form>
@@ -172,6 +226,51 @@ function space_reservation_render_settings_page() {
                 <?php endforeach; ?>
             </tbody>
         </table>
+
+        <h2>Salles réservables</h2>
+        <p>Liste lue en direct sur l'API S-RESA (jamais saisie ici à la main) — seules les salles
+        <strong>réservables</strong> apparaissent : le serveur refuserait de toute façon une salle qui
+        ne l'est pas, en proposer une serait trompeur. Un bureau peut entrer ou sortir de cette liste
+        au fil du temps (décision d'exploitation), sans mise à jour du plugin.</p>
+        <?php $espaces = space_reservation_recuperer_espaces_reservables(); ?>
+        <?php if ($espaces === null) : ?>
+            <div class="notice notice-error inline"><p>Liste indisponible, vérifiez la connexion.</p></div>
+        <?php elseif (empty($espaces)) : ?>
+            <p><em>Aucune salle réservable actuellement.</em></p>
+        <?php else : ?>
+            <table class="widefat striped" style="max-width:900px;">
+                <thead><tr><th>Nom</th><th style="width:100px;">Code</th><th>Shortcode</th></tr></thead>
+                <tbody>
+                    <?php foreach ($espaces as $e) :
+                        $code = isset($e['code']) ? (string) $e['code'] : '';
+                        $nom = isset($e['nom']) ? (string) $e['nom'] : '';
+                        $shortcode = '[space_disponibilite salle="' . $code . '"]';
+                    ?>
+                    <tr>
+                        <td><?php echo esc_html($nom); ?></td>
+                        <td><code><?php echo esc_html($code); ?></code></td>
+                        <td>
+                            <code class="spr-shortcode-copie"><?php echo esc_html($shortcode); ?></code>
+                            <button type="button" class="button button-small spr-btn-copier" data-shortcode="<?php echo esc_attr($shortcode); ?>">Copier</button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+            <script>
+            (function () {
+                document.querySelectorAll('.spr-btn-copier').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        var texte = btn.getAttribute('data-shortcode');
+                        var termine = function () { var t = btn.textContent; btn.textContent = 'Copié !'; setTimeout(function () { btn.textContent = t; }, 1500); };
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(texte).then(termine);
+                        }
+                    });
+                });
+            })();
+            </script>
+        <?php endif; ?>
     </div>
     <?php
 }
@@ -273,6 +372,10 @@ function space_mon_espace_enqueue_assets() {
     // mon-espace.js retombe sur cfg.pageUrl (la page courante, cas normal).
     $magicReturnUrl = trim((string) get_option(SPACE_RESERVATION_OPTION_MAGIC_RETURN_URL, ''));
     $cfg['magicReturnUrl'] = $magicReturnUrl !== '' ? $magicReturnUrl : '';
+    // (1.6.0) reservationUrl : destination du bouton « Nouvelle réservation ». Vide → mon-espace.js
+    // n'affiche pas le bouton (cf. réglage ci-dessus, pas de destination devinée).
+    $reservationUrl = trim((string) get_option(SPACE_RESERVATION_OPTION_RESERVATION_URL, ''));
+    $cfg['reservationUrl'] = $reservationUrl !== '' ? $reservationUrl : '';
     wp_localize_script('space-mon-espace', 'SpaceMonEspaceConfig', $cfg);
 }
 add_action('wp_enqueue_scripts', 'space_mon_espace_enqueue_assets');

@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.5.0
+Stable tag: 1.6.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -30,10 +30,14 @@ navigateur du visiteur, vers l'API S-RESA.
    ajouter cette page au menu du site. Renseigner ensuite « URL de l'espace client » dans
    les réglages du plugin avec l'URL de CETTE page (sinon le lien « Déjà client ? » du
    tunnel renvoie vers l'ancien espace client, sur un autre domaine).
-5. Optionnel : placer `[space_disponibilite salle="CODE"]` sur la page d'une salle (le
-   `CODE` de la salle est visible côté équipe, écran Réglages de S-RESA), avec l'attribut
-   `tunnel="URL"` pointant vers la page du shortcode `[space_reservation]` pour que le
-   bouton « Réserver cette date » fonctionne.
+5. Optionnel : placer `[space_disponibilite salle="CODE"]` sur la page d'une salle — le
+   `CODE` et le shortcode prêt à copier de chaque salle réservable sont listés dans les
+   réglages du plugin, section « Salles réservables ». Avec l'attribut `tunnel="URL"`
+   pointant vers la page du shortcode `[space_reservation]`, le bouton « Réserver cette
+   date » fonctionne.
+6. Renseigner « URL de la page de réservation » dans les réglages avec l'URL de la page du
+   shortcode `[space_reservation]` : le bouton « + Nouvelle réservation » de
+   `[space_mon_espace]` s'affiche alors et y renvoie le client, identifié.
 
 == Limites de la version actuelle ==
 
@@ -47,6 +51,18 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.6.0 =
+* Réglages : nouvelle section « Salles réservables » — nom, code et shortcode
+  `[space_disponibilite salle="CODE"]` prêt à copier pour chaque salle, lus EN DIRECT sur
+  l'API S-RESA (jamais saisis à la main : une salle réservable aujourd'hui peut ne plus
+  l'être demain). Si l'API ne répond pas, l'écran le dit explicitement (« Liste
+  indisponible, vérifiez la connexion ») — jamais une liste vide silencieuse.
+* `[space_mon_espace]` : nouveau bouton « + Nouvelle réservation » sur l'écran « Mes
+  réservations », vers la page qui porte `[space_reservation]` (nouveau réglage « URL de la
+  page de réservation »). Le client y arrive identifié — le même lien de connexion (valable
+  2 heures) est repassé au tunnel, qui le reconnaît sans lui redemander son email. Réglage
+  vide → le bouton ne s'affiche pas (pas de destination devinée).
 
 = 1.5.0 =
 * « Ce qui se passe sur le site reste sur le site. » `[space_mon_espace]` devient l'espace
