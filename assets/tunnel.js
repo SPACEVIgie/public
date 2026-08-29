@@ -676,7 +676,13 @@
       if (!pz) return;
       state.pauseModal = { editKey: editKey, formule_id: pz.formule_id, nombre_personnes: pz.nombre_personnes, heure_pause: pz.heure_pause };
     } else {
-      state.pauseModal = { editKey: null, formule_id: cat.pauses[0].id, nombre_personnes: '', heure_pause: heureParDefautPause() };
+      // Pré-remplissage de l'effectif (même principe que la modale pause côté staff, 25/08,
+      // [[sresa_modale_pause_trois_defauts_2026_08_25]]) : par_personne → effectif déjà saisi à
+      // la recherche (state.search.capaciteMin), jamais deviné pour un forfait (un nombre de
+      // lots par défaut serait faux).
+      var premiere = cat.pauses[0];
+      var effectifDefaut = premiere.unite_facturation === 'forfait' ? '' : (state.search.capaciteMin || '');
+      state.pauseModal = { editKey: null, formule_id: premiere.id, nombre_personnes: effectifDefaut, heure_pause: heureParDefautPause() };
     }
     render();
   }
