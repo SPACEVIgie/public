@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.7.3
+Stable tag: 1.7.4
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -51,6 +51,25 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.7.4 =
+* [tunnel de reservation] refonte de l'ecran Options : les six lignes de pause (une par formule)
+  sont remplacees par un bouton « + Ajouter une pause » ouvrant une modale (formule, descriptif,
+  prix). Plusieurs pauses sont desormais possibles, chacune avec son PROPRE horaire (fini le
+  10:30 impose a toutes, sans lien avec le creneau reellement reserve) - l'heure par defaut
+  proposee est le milieu du creneau reserve, toujours modifiable. Chaque pause ajoutee apparait
+  en ligne recapitulative modifiable et supprimable ; l'ajout/la modification/la suppression sont
+  immediats, avec 6 secondes pour annuler (jamais une confirmation avant l'action).
+* [tunnel de reservation] les prix HT/TTC de l'ecran Options affichent desormais le TTC en premier
+  (« 8,40 EUR TTC (7,00 EUR HT) ») au lieu du HT - coherent avec l'etape Recapitulatif qui suivait
+  deja cette convention depuis la 1.7.1.
+* [tunnel de reservation] correctif annexe : l'estimation de prix affichee pour une pause au
+  forfait (ex. capsules de cafe vendues par lot) ne comptait qu'un seul lot quel que soit le
+  nombre saisi - la facturation reelle, cote serveur, etait deja correcte depuis le 28/08 ; seul
+  le montant affiche AVANT paiement etait sous-estime.
+* Une option tarifaire peut desormais etre marquee « ne sera pas proposee dans le tunnel » (cote
+  S-PACE, ecran Parametres) : elle reste utilisable par l'equipe mais disparait du tunnel public -
+  aucune option n'est concernee par defaut.
 
 = 1.7.3 =
 * [tunnel de reservation] : la proposition d'identification (« Deja locataire S-PACE ? ») est

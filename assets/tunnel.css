@@ -118,13 +118,58 @@
 .spr-option-row:last-child { border-bottom: none; }
 .spr-option-row .spr-option-name { font-weight: 600; font-size: 14px; }
 .spr-option-row .spr-option-price { font-size: 12.5px; color: var(--spr-text-soft); }
-.spr-option-row .spr-option-price-ttc { color: var(--spr-text-soft); opacity: .75; }
+/* (29/08, §3 « HT et TTC ») — renommée depuis .spr-option-price-ttc : porte désormais le HT
+   secondaire (le TTC est devenu l'information dominante, cf. spr-montant-ttc ci-dessous), même
+   style discret. Utilisée aussi hors .spr-option-row (récap pause, modale). */
+.spr-option-price-secondary, .spr-montant-ttc + .spr-option-price-secondary { color: var(--spr-text-soft); opacity: .75; }
+.spr-montant-ttc { font-weight: 600; }
 .spr-option-row .spr-qty { display: flex; align-items: center; gap: 8px; }
 .spr-option-row .spr-qty button {
   width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--spr-border); background: #fff;
   cursor: pointer; font-size: 15px; line-height: 1;
 }
 .spr-option-row .spr-qty span { min-width: 20px; text-align: center; font-weight: 600; }
+
+/* (29/08, refonte modale pause) — remplace les six lignes de quantité par formule : une liste
+   récap des pauses déjà ajoutées (modifiable/supprimable) + un bouton « + Ajouter une pause »
+   qui ouvre la modale ci-dessous. */
+.spr-pause-list { margin-bottom: 10px; }
+.spr-pause-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--spr-border-soft);
+}
+.spr-pause-line:last-child { border-bottom: none; }
+.spr-pause-line-nom { font-weight: 600; font-size: 14px; }
+.spr-pause-line-detail { font-size: 12.5px; color: var(--spr-text-soft); margin-top: 2px; }
+.spr-pause-line-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.spr-pause-line-actions .spr-btn { padding: 6px 10px; font-size: 12.5px; }
+
+/* Modale « Ajouter/Modifier une pause » (§1) — overlay plein écran, carte centrée, même famille
+   visuelle que .spr-card (rayon, ombre) pour ne pas introduire un second style. */
+.spr-modal-overlay {
+  position: fixed; inset: 0; background: rgba(30, 30, 30, .45); display: flex; align-items: center;
+  justify-content: center; padding: 16px; z-index: 1000;
+}
+.spr-modal {
+  background: #fff; border-radius: 14px; padding: 22px 24px; width: 100%; max-width: 420px;
+  max-height: calc(100vh - 32px); overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,.2);
+}
+.spr-modal-title { font-size: 17px; font-weight: 700; margin-bottom: 14px; }
+.spr-pause-modal-prix { font-size: 13.5px; margin: -6px 0 14px; }
+.spr-pause-modal-descriptif {
+  font-size: 13px; color: var(--spr-text-soft); background: var(--spr-rose-pale); border-radius: 10px;
+  padding: 10px 12px; margin: -4px 0 14px;
+}
+
+/* Bandeau d'annulation (cran ②, §4 diagnostic) — jamais une confirmation AVANT l'action, juste
+   une possibilité de revenir en arrière juste après (~6s, minuteur JS côté tunnel.js). */
+.spr-undo-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--spr-text); color: #fff; border-radius: 10px; padding: 10px 14px;
+  margin-top: 12px; font-size: 13px;
+}
+.spr-undo-bar .spr-btn { color: #fff; border-color: rgba(255,255,255,.4); background: none; }
+.spr-undo-bar .spr-btn:hover { border-color: #fff; background: rgba(255,255,255,.1); }
 
 .spr-payment-choice { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
 .spr-payment-option {

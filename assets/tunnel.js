@@ -28,6 +28,12 @@
 
   var MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
+  // (29/08, refonte modale pause) — minuteur du bandeau « Annulé » après ajout/modification d'une
+  // pause (~6 s). Hors de `state` comme _amenagementTimer côté assistant interne (app.js) : un
+  // setTimeout ne doit pas être recréé à chaque render(), qui réécrit tout le DOM.
+  var _pauseUndoTimer = null;
+  var _pauseKeySeq = 0;
+
   var state = {
     step: 1,
     config: null,
@@ -35,7 +41,19 @@
     disponibilite: null,
     selectedEspaceId: null,
     optionsCatalogue: null,
-    selectedPauses: {},
+    // (29/08, refonte modale pause) — remplace l'ancien `selectedPauses` (map qty par formule,
+    // horaire fixe '10:30' pour toutes). Chaque pause ajoutée est désormais sa PROPRE ligne,
+    // avec son horaire propre : {key, formule_id, nombre_personnes, heure_pause}. `key` est un
+    // identifiant client (compteur local, jamais envoyé au serveur) qui permet de modifier/
+    // supprimer une ligne précise, y compris deux pauses de la même formule à deux horaires.
+    pauses: [],
+    // Modale d'ajout/modification ouverte : {editKey: null|key, formule_id, nombre_personnes,
+    // heure_pause} — null quand fermée. Jamais restaurée par le snapshot localStorage (une
+    // modale ouverte au moment de partir s'identifier n'a pas de sens au retour).
+    pauseModal: null,
+    // Bandeau « Annulé » (cran ②, même motif que l'assistant interne) — jamais une confirmation
+    // AVANT l'ajout, seulement une possibilité de revenir en arrière juste après.
+    pauseUndo: null, // {key, libelle}
     selectedRestauration: 0,
     selectedAmenagementId: null,
     token: null,
@@ -179,7 +197,7 @@
 
   // Montant HT des OPTIONS sélectionnées à l'étape 3 — MÊME FORMULE que le serveur
   // (lib/tarificationOptions.js calculerOptionsReservation) : par_personne × effectif de la ligne
-  // (pause/restauration) ou du jour (aménagement, effectif = capaciteMin recherché), forfait × 1.
+  // (pause/restauration) ou du jour (aménagement, effectif = capaciteMin recherché).
   // Une option sans prix défini dans sresa_tarifs_options compte pour 0 — ne gonfle jamais le total,
   // exactement comme côté serveur (§ « zéro n'est pas absent », l'option reste sélectionnée et sera
   // livrée même à 0 €). Recalculé à la volée depuis le catalogue déjà chargé (GET /tunnel/options) :
@@ -188,12 +206,19 @@
     var cat = state.optionsCatalogue;
     if (!cat) return 0;
     var ht = 0;
-    Object.keys(state.selectedPauses).forEach(function (id) {
-      var qte = state.selectedPauses[id];
-      if (!qte) return;
-      var p = cat.pauses.filter(function (x) { return String(x.id) === String(id); })[0];
+    // (29/08, refonte modale pause) — CORRECTIF ANNEXE trouvé en migrant vers `state.pauses` :
+    // l'ancien calcul multipliait par la quantité UNIQUEMENT en `par_personne`, jamais en
+    // `forfait` (toujours ×1) — alors que le serveur (tarificationOptions.js, correctif du 28/08,
+    // [[sresa_tarif_pauses_forfait_lots_2026_08_28]]) multiplie les DEUX par `nombre_personnes`
+    // (effectif ou nombre de lots selon l'unité, même champ). L'estimation affichée au client
+    // sous-évaluait donc une pause forfait à plus d'un lot (ex. 3 lots de « 10 capsules de café
+    // Merling » affichés au prix d'1 seul) — jamais la FACTURATION réelle (déjà correcte côté
+    // serveur), seulement ce que le client voyait avant de payer. Corrigé au passage : chaque
+    // pause de `state.pauses` compte pour `nombre_personnes × prix_ht`, quelle que soit l'unité.
+    state.pauses.forEach(function (pz) {
+      var p = cat.pauses.filter(function (x) { return String(x.id) === String(pz.formule_id); })[0];
       if (!p || p.prix_ht == null) return;
-      ht += Number(p.prix_ht) * (p.unite_facturation === 'par_personne' ? qte : 1);
+      ht += Number(p.prix_ht) * (Number(pz.nombre_personnes) || 0);
     });
     if (state.selectedRestauration > 0 && cat.restauration.length && cat.restauration[0].prix_ht != null) {
       var r = cat.restauration[0];
@@ -279,6 +304,32 @@
     return ((f[0] * 60 + f[1]) - (d[0] * 60 + d[1])) / 60;
   }
 
+  function minutesVersHeure(min) {
+    var hh = Math.floor(min / 60);
+    var mm = Math.round(min % 60);
+    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+  }
+
+  // (29/08, §3 diagnostic « L'horaire est-il demandé ? ») — défaut de l'heure de pause, plus
+  // jamais '10:30' en dur (n'avait aucun sens pour une réservation l'après-midi). Milieu du
+  // créneau RÉELLEMENT réservé (journée/demi-journée/heures précises), arrondi au pas serveur
+  // (pasMinutes(), même granularité que les créneaux de réservation) et pincé à l'intérieur du
+  // créneau si l'arrondi le faisait déborder. Reste un DÉFAUT modifiable dans la modale — jamais
+  // imposé.
+  function heureParDefautPause() {
+    var hor = computeCreneauHoraires();
+    if (!hor.debut || !hor.fin) return '10:30';
+    var d = hor.debut.split(':').map(Number);
+    var f = hor.fin.split(':').map(Number);
+    var minDebut = d[0] * 60 + d[1];
+    var minFin = f[0] * 60 + f[1];
+    if (!(minFin > minDebut)) return hor.debut;
+    var pas = pasMinutes();
+    var milieu = Math.round((minDebut + minFin) / 2 / pas) * pas;
+    milieu = Math.min(Math.max(milieu, minDebut), minFin);
+    return minutesVersHeure(milieu);
+  }
+
   function computeDuree() {
     if (state.search.unite === 'heure') {
       var horaires = computeCreneauHoraires();
@@ -315,7 +366,17 @@
 
     var errorHtml = state.error ? h(['<div class="spr-banner spr-error">', esc(state.error), '</div>']) : '';
 
-    root.innerHTML = (state.step < 6 || state.step === 7 ? stepsHtml : '') + errorHtml + body;
+    // (29/08, refonte modale pause) — la modale d'ajout/modif et le bandeau d'annulation sont
+    // rendus ICI, en dehors de renderStepOptions() : root.innerHTML est réécrit en entier à
+    // chaque render() de toute façon (même motif que le reste du fichier), donc pas besoin d'un
+    // second point de montage — un seul `render()` reste la seule source de vérité du DOM.
+    var modalHtml = state.pauseModal ? renderPauseModal() : '';
+    var undoHtml = state.pauseUndo ? h(['<div class="spr-undo-bar">',
+      '<span>', esc(state.pauseUndo.libelle), '</span>',
+      '<button type="button" class="spr-btn spr-ghost" id="spr-pause-undo-btn">Annuler</button>',
+      '</div>']) : '';
+
+    root.innerHTML = (state.step < 6 || state.step === 7 ? stepsHtml : '') + errorHtml + body + undoHtml + modalHtml;
     bindEvents();
   }
 
@@ -473,35 +534,66 @@
       '</div>']);
   }
 
+  // (29/08, §3 « HT et TTC ») — le TTC redevient l'information DOMINANTE, le HT une note
+  // secondaire entre parenthèses. C'est déjà la convention retenue à l'étape Récapitulatif
+  // (§4, 25/08 — spr-recap-total en évidence, spr-recap-ht-info en dessous, discret) : l'étape
+  // Options était la seule à afficher l'inverse (HT dominant, « 7.00 € HT (8.40 € TTC) »),
+  // incohérence signalée par Olivier le 29/08. Même donnée (prix_ht), même taux 20 % que
+  // montantOptionsTtc() — aucun second calcul.
+  function libelleMontantTtcHt(prixHt) {
+    var ttc = Number(prixHt) * 1.2;
+    return h(['<span class="spr-montant-ttc">', ttc.toFixed(2), ' € TTC</span>',
+      ' <span class="spr-option-price-secondary">(', Number(prixHt).toFixed(2), ' € HT)</span>']);
+  }
+
+  // Ligne récap d'une pause déjà ajoutée (étape 3) — MODIFIABLE et SUPPRIMABLE (§4 diagnostic :
+  // sinon il faut tout recommencer). Le prix affiché reprend la même formule que
+  // montantOptionsHt() (prix_ht × nombre_personnes, quelle que soit l'unité) pour ne jamais
+  // diverger de l'estimation totale plus bas dans le tunnel.
+  function renderPauseLigne(pz, cat) {
+    var formule = cat.pauses.filter(function (p) { return String(p.id) === String(pz.formule_id); })[0];
+    var uniteMot = formule && formule.unite_facturation === 'forfait' ? 'lot(s)' : 'pers.';
+    var montant = formule && formule.prix_ht != null
+      ? libelleMontantTtcHt(Number(formule.prix_ht) * (Number(pz.nombre_personnes) || 0))
+      : 'Prix à définir';
+    return h(['<div class="spr-pause-line">',
+      '<div class="spr-pause-line-info">',
+      '<div class="spr-pause-line-nom">', esc(formule ? formule.nom : 'Formule'), '</div>',
+      '<div class="spr-pause-line-detail">', esc(pz.heure_pause), ' — ', pz.nombre_personnes, ' ', uniteMot, ' — ', montant, '</div>',
+      '</div>',
+      '<div class="spr-pause-line-actions">',
+      '<button type="button" class="spr-btn spr-ghost spr-pause-modifier" data-pause-key="', pz.key, '">Modifier</button>',
+      '<button type="button" class="spr-btn spr-ghost spr-pause-supprimer" data-pause-key="', pz.key, '">Supprimer</button>',
+      '</div></div>']);
+  }
+
   // ---- Étape 3 : options ----
   function renderStepOptions() {
     var cat = state.optionsCatalogue;
     if (!cat) return '<div class="spr-card spr-loading">Chargement des options…</div>';
 
-    // (25/08, §4) TTC affiché en information à côté du HT — même taux 20 % que
-    // montantOptionsTtc() ci-dessus (constante partagée, voir sa note sur l'absence de taux
-    // différencié à ce jour).
-    var ttcOption = function (prixHt) { return (Number(prixHt) * 1.2).toFixed(2) + ' € TTC'; };
-
-    var pausesHtml = cat.pauses.length ? cat.pauses.map(function (p) {
-      var qty = state.selectedPauses[p.id] || 0;
-      return h(['<div class="spr-option-row"><div><div class="spr-option-name">', esc(p.nom), '</div>',
-        '<div class="spr-option-price">', Number(p.prix_ht).toFixed(2), ' € HT',
-        ' <span class="spr-option-price-ttc">(', ttcOption(p.prix_ht), ')</span> / personne</div></div>',
-        '<div class="spr-qty"><button class="spr-qty-minus" data-pause="', p.id, '">−</button><span>', qty, '</span><button class="spr-qty-plus" data-pause="', p.id, '">+</button></div>',
-        '</div>']);
-    }).join('') : '<div class="spr-subtitle">Aucune pause disponible.</div>';
+    // (29/08, §1 « le bouton et la modale ») — remplace les six lignes de quantité (une par
+    // formule active) par une liste récap des pauses déjà ajoutées + UN bouton « + Ajouter une
+    // pause » qui ouvre la modale (nom, descriptif, prix — sans compresser). Plusieurs pauses
+    // sont désormais possibles (le backend l'acceptait déjà, cf. options.pauses[] côté
+    // construirePayload), chacune avec son propre horaire.
+    var pausesRecap = state.pauses.map(function (pz) { return renderPauseLigne(pz, cat); }).join('');
+    var pausesHtml = cat.pauses.length
+      ? h([pausesRecap ? '<div class="spr-pause-list">' + pausesRecap + '</div>' : '',
+        '<button type="button" class="spr-btn" id="spr-btn-ajouter-pause">+ Ajouter une pause</button>'])
+      : '<div class="spr-subtitle">Aucune pause disponible.</div>';
 
     var restauRow = cat.restauration.length ? h(['<div class="spr-option-row"><div><div class="spr-option-name">Plateau repas</div>',
-      '<div class="spr-option-price">', Number(cat.restauration[0].prix_ht).toFixed(2), ' € HT',
-      ' <span class="spr-option-price-ttc">(', ttcOption(cat.restauration[0].prix_ht), ')</span> / personne</div></div>',
+      '<div class="spr-option-price">', libelleMontantTtcHt(cat.restauration[0].prix_ht), ' / personne</div></div>',
       '<div class="spr-qty"><button id="spr-restau-minus">−</button><span>', state.selectedRestauration, '</span><button id="spr-restau-plus">+</button></div>',
       '</div>']) : '';
 
     var amenagementHtml = cat.amenagements.length ? h(['<div class="spr-field"><label>Aménagement</label><select id="spr-amenagement">',
       '<option value="">Aucun</option>',
       cat.amenagements.map(function (a) {
-        return '<option value="' + a.id + '"' + (state.selectedAmenagementId === a.id ? ' selected' : '') + '>' + esc(a.nom) + ' (+' + Number(a.prix_ht).toFixed(2) + ' € HT / +' + ttcOption(a.prix_ht) + ')</option>';
+        // Un <select> natif ignore tout balisage dans ses <option> — texte brut, TTC d'abord
+        // (même inversion qu'ailleurs sur cette étape).
+        return '<option value="' + a.id + '"' + (state.selectedAmenagementId === a.id ? ' selected' : '') + '>' + esc(a.nom) + ' (+' + (Number(a.prix_ht) * 1.2).toFixed(2) + ' € TTC / +' + Number(a.prix_ht).toFixed(2) + ' € HT)</option>';
       }).join(''),
       '</select></div>']) : '';
 
@@ -513,6 +605,123 @@
       '<button class="spr-btn" id="spr-btn-retour2">← Retour</button>',
       '<button class="spr-btn spr-primary" id="spr-btn-continuer3">Continuer →</button>',
       '</div></div>']);
+  }
+
+  // Modale « Ajouter/Modifier une pause » (§1) — nom, DESCRIPTIF (sresa_formules.descriptif,
+  // migration 063 — peut être vide si Olivier n'a pas encore rempli cette formule), prix, sans
+  // compresser. Le select formule déclenche un render() (pour rafraîchir descriptif/prix/libellé
+  // effectif-ou-lots), les deux autres champs se contentent de mettre l'état à jour (repris tels
+  // quels si un changement de formule redessine la modale).
+  function renderPauseModal() {
+    var cat = state.optionsCatalogue;
+    var m = state.pauseModal;
+    var formule = cat.pauses.filter(function (p) { return String(p.id) === String(m.formule_id); })[0];
+    var uniteLabel = formule && formule.unite_facturation === 'forfait' ? 'Nombre de lots' : 'Effectif (personnes)';
+    var uniteMot = formule && formule.unite_facturation === 'forfait' ? 'lot' : 'personne';
+    var prixInfo = formule && formule.prix_ht != null
+      ? h(['<div class="spr-pause-modal-prix">', libelleMontantTtcHt(formule.prix_ht), ' / ', uniteMot, '</div>'])
+      : '';
+    var descriptifInfo = formule && formule.descriptif
+      ? h(['<div class="spr-pause-modal-descriptif">', esc(formule.descriptif), '</div>'])
+      : '';
+
+    return h(['<div class="spr-modal-overlay" id="spr-pause-modal-overlay"><div class="spr-modal">',
+      '<div class="spr-modal-title">', m.editKey ? 'Modifier la pause' : 'Ajouter une pause', '</div>',
+      '<div class="spr-field"><label>Formule</label><select id="spr-pause-formule">',
+      cat.pauses.map(function (p) {
+        return '<option value="' + p.id + '"' + (String(p.id) === String(m.formule_id) ? ' selected' : '') + '>' + esc(p.nom) + '</option>';
+      }).join(''),
+      '</select></div>',
+      descriptifInfo, prixInfo,
+      '<div class="spr-grid-2">',
+      '<div class="spr-field"><label>', esc(uniteLabel), '</label><input type="number" min="1" step="1" id="spr-pause-effectif" value="', esc(m.nombre_personnes), '"></div>',
+      '<div class="spr-field"><label>Heure</label><input type="time" id="spr-pause-heure" value="', esc(m.heure_pause), '"></div>',
+      '</div>',
+      '<div class="spr-actions spr-end">',
+      '<button type="button" class="spr-btn" id="spr-pause-modal-annuler">Annuler</button>',
+      '<button type="button" class="spr-btn spr-primary" id="spr-pause-modal-valider">', m.editKey ? 'Enregistrer' : 'Ajouter', '</button>',
+      '</div>',
+      '</div></div>']);
+  }
+
+  // Remplace state.pauses en gardant l'ancienne valeur pour l'annulation (cran ②, §4 diagnostic —
+  // JAMAIS une confirmation avant l'action, seulement une possibilité de revenir en arrière juste
+  // après, ~6s). Rien n'est envoyé au serveur ici : les pauses ne sont créées qu'à la soumission
+  // finale du tunnel (POST /tunnel/reserver) — l'« annulation » est donc un pur retour d'état
+  // local, pas un second appel réseau comme côté assistant interne (detailAmenagementChange).
+  function definirPauses(nouvelles, libelle) {
+    if (_pauseUndoTimer) { clearTimeout(_pauseUndoTimer); _pauseUndoTimer = null; }
+    var precedentes = state.pauses;
+    state.pauses = nouvelles;
+    state.pauseUndo = { libelle: libelle, precedentes: precedentes };
+    render();
+    _pauseUndoTimer = setTimeout(function () {
+      _pauseUndoTimer = null;
+      state.pauseUndo = null;
+      render();
+    }, 6000);
+  }
+
+  function annulerActionPause() {
+    if (_pauseUndoTimer) { clearTimeout(_pauseUndoTimer); _pauseUndoTimer = null; }
+    if (state.pauseUndo) { state.pauses = state.pauseUndo.precedentes; state.pauseUndo = null; }
+    render();
+  }
+
+  function ouvrirModalePause(editKey) {
+    var cat = state.optionsCatalogue;
+    if (!cat || !cat.pauses.length) return;
+    if (editKey) {
+      var pz = state.pauses.filter(function (x) { return x.key === editKey; })[0];
+      if (!pz) return;
+      state.pauseModal = { editKey: editKey, formule_id: pz.formule_id, nombre_personnes: pz.nombre_personnes, heure_pause: pz.heure_pause };
+    } else {
+      state.pauseModal = { editKey: null, formule_id: cat.pauses[0].id, nombre_personnes: '', heure_pause: heureParDefautPause() };
+    }
+    render();
+  }
+
+  function fermerModalePause() {
+    state.pauseModal = null;
+    render();
+  }
+
+  function validerModalePause() {
+    var m = state.pauseModal;
+    if (!m) return;
+    var cat = state.optionsCatalogue;
+    // (module-level, PAS bindEvents) — byId n'existe qu'à l'intérieur de bindEvents() ; ici,
+    // comme le reste des fonctions de ce niveau (doIdentify, etc.), on lit le DOM directement.
+    var formuleId = Number(document.getElementById('spr-pause-formule').value);
+    var formule = cat.pauses.filter(function (p) { return p.id === formuleId; })[0];
+    var effectif = parseInt(document.getElementById('spr-pause-effectif').value, 10);
+    var heure = document.getElementById('spr-pause-heure').value;
+    if (!formule) { state.error = 'Choisissez une formule.'; render(); return; }
+    if (!effectif || effectif < 1) { state.error = formule.unite_facturation === 'forfait' ? 'Indiquez un nombre de lots valide.' : 'Indiquez un effectif valide.'; render(); return; }
+    if (!heure) { state.error = 'Choisissez une heure pour la pause.'; render(); return; }
+    state.error = null;
+
+    var uniteMot = formule.unite_facturation === 'forfait' ? 'lot(s)' : 'pers.';
+    var nouvelles, libelle;
+    if (m.editKey) {
+      nouvelles = state.pauses.map(function (pz) {
+        return pz.key === m.editKey ? { key: pz.key, formule_id: formuleId, nombre_personnes: effectif, heure_pause: heure } : pz;
+      });
+      libelle = 'Pause modifiée : ' + formule.nom + ', ' + effectif + ' ' + uniteMot + ', ' + heure + '.';
+    } else {
+      nouvelles = state.pauses.concat([{ key: ++_pauseKeySeq, formule_id: formuleId, nombre_personnes: effectif, heure_pause: heure }]);
+      libelle = 'Pause ajoutée : ' + formule.nom + ', ' + effectif + ' ' + uniteMot + ', ' + heure + '.';
+    }
+    state.pauseModal = null;
+    definirPauses(nouvelles, libelle);
+  }
+
+  function supprimerPause(key) {
+    var pz = state.pauses.filter(function (x) { return x.key === key; })[0];
+    var cat = state.optionsCatalogue;
+    var formule = pz && cat ? cat.pauses.filter(function (p) { return String(p.id) === String(pz.formule_id); })[0] : null;
+    var nouvelles = state.pauses.filter(function (x) { return x.key !== key; });
+    definirPauses(nouvelles, 'Pause supprimée' + (formule ? (' : ' + formule.nom) : '') + '.');
   }
 
   // ---- Étape 4 : identification + mode de paiement + coordonnées ----
@@ -697,6 +906,20 @@
     // if/else par étape ci-dessous, plutôt que dupliqué dans chaque branche.
     if (byId('spr-btn-identify')) byId('spr-btn-identify').onclick = doIdentify;
 
+    // (29/08, refonte modale pause) — bandeau d'annulation et modale rendus HORS du if/else par
+    // étape (même motif que le bouton d'identification ci-dessus) : la modale ne s'ouvre qu'à
+    // l'étape 3, mais son câblage n'a pas besoin d'être dupliqué par étape.
+    if (byId('spr-pause-undo-btn')) byId('spr-pause-undo-btn').onclick = annulerActionPause;
+    if (state.pauseModal) {
+      if (byId('spr-pause-formule')) byId('spr-pause-formule').onchange = function (e) { state.pauseModal.formule_id = Number(e.target.value); render(); };
+      if (byId('spr-pause-effectif')) byId('spr-pause-effectif').onchange = function (e) { state.pauseModal.nombre_personnes = e.target.value; };
+      if (byId('spr-pause-heure')) byId('spr-pause-heure').onchange = function (e) { state.pauseModal.heure_pause = e.target.value; };
+      if (byId('spr-pause-modal-annuler')) byId('spr-pause-modal-annuler').onclick = fermerModalePause;
+      if (byId('spr-pause-modal-valider')) byId('spr-pause-modal-valider').onclick = validerModalePause;
+      // Clic sur le fond (hors carte) = Annuler — jamais sur la carte elle-même.
+      if (byId('spr-pause-modal-overlay')) byId('spr-pause-modal-overlay').onclick = function (e) { if (e.target.id === 'spr-pause-modal-overlay') fermerModalePause(); };
+    }
+
     if (state.step === 1) {
       if (byId('spr-date')) byId('spr-date').onchange = function (e) { state.search.date = e.target.value; };
       if (byId('spr-type')) byId('spr-type').onchange = function (e) { state.search.typeReservation = e.target.value; };
@@ -717,11 +940,12 @@
       if (byId('spr-btn-continuer2')) byId('spr-btn-continuer2').onclick = function () { state.step = 3; loadOptions(); };
       if (byId('spr-btn-attente')) byId('spr-btn-attente').onclick = doListeAttente;
     } else if (state.step === 3) {
-      document.querySelectorAll('.spr-qty-plus').forEach(function (b) {
-        b.onclick = function () { var id = b.dataset.pause; state.selectedPauses[id] = (state.selectedPauses[id] || 0) + 1; render(); };
+      if (byId('spr-btn-ajouter-pause')) byId('spr-btn-ajouter-pause').onclick = function () { ouvrirModalePause(null); };
+      document.querySelectorAll('.spr-pause-modifier').forEach(function (b) {
+        b.onclick = function () { ouvrirModalePause(Number(b.dataset.pauseKey)); };
       });
-      document.querySelectorAll('.spr-qty-minus').forEach(function (b) {
-        b.onclick = function () { var id = b.dataset.pause; state.selectedPauses[id] = Math.max(0, (state.selectedPauses[id] || 0) - 1); render(); };
+      document.querySelectorAll('.spr-pause-supprimer').forEach(function (b) {
+        b.onclick = function () { supprimerPause(Number(b.dataset.pauseKey)); };
       });
       if (byId('spr-restau-plus')) byId('spr-restau-plus').onclick = function () { state.selectedRestauration++; render(); };
       if (byId('spr-restau-minus')) byId('spr-restau-minus').onclick = function () { state.selectedRestauration = Math.max(0, state.selectedRestauration - 1); render(); };
@@ -922,7 +1146,7 @@
     try {
       localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
         search: state.search, disponibilite: state.disponibilite, selectedEspaceId: state.selectedEspaceId,
-        selectedPauses: state.selectedPauses, selectedRestauration: state.selectedRestauration,
+        pauses: state.pauses, selectedRestauration: state.selectedRestauration,
         selectedAmenagementId: state.selectedAmenagementId,
         // (correctif 29/08) step RÉEL — plus le "4" figé d'avant. L'identification est désormais
         // proposée dès l'étape 1/2 (renderIdentifyPrompt), pas seulement à l'étape Paiement :
@@ -977,10 +1201,12 @@
     var s = state.search;
     var estHeure = s.unite === 'heure';
     var options = { pauses: [], restauration: [], amenagement_id: state.selectedAmenagementId || undefined };
-    Object.keys(state.selectedPauses).forEach(function (id) {
-      if (state.selectedPauses[id] > 0) {
-        options.pauses.push({ date_jour: s.date, heure_pause: '10:30', formule_id: Number(id), nombre_personnes: state.selectedPauses[id] });
-      }
+    // (29/08, refonte modale pause) — heure_pause n'est plus jamais '10:30' en dur : chaque
+    // pause de state.pauses porte désormais la sienne, saisie dans la modale (défaut proposé =
+    // heureParDefautPause(), toujours modifiable). Le serveur (routes/tunnel.js POST /reserver)
+    // acceptait déjà ce tableau tel quel, sans changement de son côté.
+    state.pauses.forEach(function (pz) {
+      options.pauses.push({ date_jour: s.date, heure_pause: pz.heure_pause, formule_id: pz.formule_id, nombre_personnes: pz.nombre_personnes });
     });
     if (state.selectedRestauration > 0 && state.optionsCatalogue.restauration.length) {
       options.restauration.push({ date_jour: s.date, nombre_personnes: state.selectedRestauration, heure_livraison: '12:30' });
@@ -1192,7 +1418,12 @@
         if (snap) {
           Object.assign(state, {
             search: snap.search, selectedEspaceId: snap.selectedEspaceId,
-            selectedPauses: snap.selectedPauses, selectedRestauration: snap.selectedRestauration,
+            // (29/08) `snap.pauses || []` : filet pour un snapshot posé par l'ANCIENNE version du
+            // plugin (avant le passage à `pauses[]`, forme `selectedPauses` map) pendant la
+            // fenêtre de 2h où l'un et l'autre pourraient coexister après ce déploiement — plutôt
+            // que de planter sur un champ absent, on repart d'une liste de pauses vide (une
+            // saisie perdue reste préférable à un écran cassé).
+            pauses: snap.pauses || [], selectedRestauration: snap.selectedRestauration,
             selectedAmenagementId: snap.selectedAmenagementId,
           });
           // (correctif 29/08 — diagnostic du jour) CAUSE CONFIRMÉE de la remise absente au
