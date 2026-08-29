@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.7.0
+Stable tag: 1.7.1
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -51,6 +51,17 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.7.1 =
+* [tunnel de reservation] : tarif non remboursable (NANR) propose au client, sous forme d'une
+  case a cocher optionnelle (jamais cochee par defaut) a l'etape Paiement - remise de 25%,
+  proposee uniquement si la reservation demarre a 21 jours calendaires minimum. Le serveur
+  reste seul decisionnaire (une case cochee a tort n'obtient jamais la remise). Rappel affiche :
+  non remboursable, non modifiable en ligne en cas d'annulation ou de changement.
+* [tunnel de reservation] : la remise qui s'applique (statut fidelite, code promo ou tarif non
+  remboursable) est desormais annoncee au client, en note discrete pres du prix (etapes Salle,
+  Recapitulatif et Paiement) - jusqu'ici invisible, une remise silencieuse ne fidelisait
+  personne. Rien ne s'affiche si aucune remise ne s'applique.
 
 = 1.7.0 =
 * `[space_disponibilite]` : les durées proposées (journée / demi-journée / heures précises)

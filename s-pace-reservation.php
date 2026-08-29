@@ -2,7 +2,7 @@
 /**
  * Plugin Name: S-PACE Réservation
  * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Shortcode [space_mon_espace] : espace client complet, sur le site (email → lien → réservations), avec bouton « Nouvelle réservation » vers le tunnel. Shortcode [space_disponibilite] : prochaine date libre d'une salle. Page de réglages : liste des salles réservables avec shortcode prêt à copier. Consomme l'API S-RESA (bloc 9 de la spec).
- * Version: 1.7.0
+ * Version: 1.7.1
  * Author: S-PACE Business Center
  * Text Domain: space-reservation
  * Update URI: https://github.com/SPACEVIgie/public
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SPACE_RESERVATION_VERSION', '1.7.0');
+define('SPACE_RESERVATION_VERSION', '1.7.1');
 // Espace client S-RESA HISTORIQUE (portail Vigie, autre domaine) — repli UNIQUEMENT : n'est plus
 // utilisé quand SPACE_RESERVATION_OPTION_ESPACE_CLIENT_URL (réglage ci-dessous) est renseigné.
 // Conservé pour ne rien casser tant qu'Olivier n'a pas créé la page « Mon espace » du site.

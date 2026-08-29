@@ -33,6 +33,7 @@
     identiteInfo: null,
     optionsPaiement: null,
     modePaiement: 'devis',
+    nonRemboursable: false, // NANR (29/08) : opt-in, jamais coche par defaut
     contact: { raison_sociale: '', nom: '', email: '', telephone: '' },
     commentaire: '',
     loading: false,
@@ -112,11 +113,37 @@
     return state.disponibilite.espaces.filter(function (e) { return e.id === id; })[0] || null;
   }
 
+  // NANR (29/08, decision Olivier) : miroir cote client de l'eligibilite J-21 controlee par
+  // calculerTarif (lib/tarification.js) - le SERVEUR reste seul decisionnaire (une case cochee a
+  // tort n'obtient jamais la remise, cf. calculerTarif) ; ce calcul ne sert qu'a ne pas proposer
+  // une case que le serveur refuserait de toute facon.
+  function joursAvantDebut() {
+    if (!state.search.date) return null;
+    var debut = new Date(state.search.date + 'T00:00:00');
+    var auj = new Date();
+    auj.setHours(0, 0, 0, 0);
+    return Math.round((debut - auj) / 86400000);
+  }
+  function eligibleNonRemboursable() {
+    var j = joursAvantDebut();
+    return j != null && j >= 21;
+  }
+
   // Tarif de la salle choisie (repli sur le tarif global informatif si la salle n'en porte pas).
   function tarifSelection() {
     var e = espaceSelectionne();
     if (e && e.tarif) return e.tarif;
     return state.disponibilite ? state.disponibilite.tarif : null;
+  }
+
+  // Annonce de remise (29/08) — le serveur calcule ET rédige le texte (libelle_annonce,
+  // lib/tarification.js calculerTarif) : déjà non-cumulatif (statut, code promo ou NANR — une
+  // seule remise à la fois, jamais la somme). Le plugin ne fait qu'afficher tel quel, près du
+  // prix, en note discrète (§25 : une remise n'est pas une action) — rien ne s'affiche si aucune
+  // remise ne s'applique (libelle_annonce vaut alors null côté serveur).
+  function renderAnnonceRemise(tarif) {
+    var t = tarif !== undefined ? tarif : tarifSelection();
+    return (t && !t.erreur && t.libelle_annonce) ? h(['<div class="spr-annonce-remise">', esc(t.libelle_annonce), '</div>']) : '';
   }
 
   // §4.9/§4.17 ext. — BUG CORRIGÉ (24/08) : ce montant ne portait QUE la salle (t.tarif_ttc), sans
@@ -387,7 +414,7 @@
         ? h([montantHt ? h(['<span class="spr-tarif-ht-inline">', esc(montantHt), ' · </span>']) : '', esc(montantTtc)])
         : 'Sur devis',
       '</span>',
-      '</div>']) : '';
+      '</div>', renderAnnonceRemise()]) : '';
 
     return h(['<div class="spr-card">',
       '<div class="spr-title">Choisissez votre espace</div>',
@@ -510,10 +537,24 @@
       '<div class="spr-field"><label>Téléphone</label><input type="tel" id="spr-c-telephone" value="', esc(state.contact.telephone), '"></div>',
       '</div>']);
 
+    // NANR (29/08, décision Olivier) : proposé seulement si éligible (réservation à 21 jours
+    // calendaires minimum), jamais coché par défaut — un choix qui se présente comme un choix,
+    // pas une case à décocher. Le serveur reste seul décisionnaire (calculerTarif) ; ce
+    // conditionnement ne sert qu'à ne pas montrer une case que le serveur refuserait.
+    var nanrHtml = '';
+    if (eligibleNonRemboursable()) {
+      nanrHtml = h(['<label class="spr-nanr-box', state.nonRemboursable ? ' spr-selected' : '', '">',
+        '<input type="checkbox" id="spr-nanr-toggle"', state.nonRemboursable ? ' checked' : '', '>',
+        '<div><div class="spr-po-title">Tarif non remboursable — -25 %</div>',
+        '<div class="spr-po-sub">Cette réservation ne sera ni remboursée ni recréditée si elle est annulée, et ne pourra plus être modifiée en ligne (nous contacter reste possible, au cas par cas).</div></div>',
+        '</label>']);
+    }
+
     return h(['<div class="spr-card">',
       '<div class="spr-title">Paiement &amp; coordonnées</div>',
       identifBlock,
       '<div class="spr-payment-choice">', paymentHtml, '</div>',
+      nanrHtml,
       indispoNote,
       contactHtml,
       '<div class="spr-field"><label>Commentaire (optionnel)</label><textarea id="spr-commentaire" rows="3">', esc(state.commentaire), '</textarea></div>',
@@ -544,10 +585,12 @@
       '<div class="spr-recap-line"><span>Date</span><span>', formatDateFr(state.search.date), '</span></div>',
       '<div class="spr-recap-line"><span>Effectif</span><span>', esc(state.search.capaciteMin), ' personnes</span></div>',
       '<div class="spr-recap-line"><span>Paiement</span><span>', modeLabels[state.modePaiement] || state.modePaiement, '</span></div>',
+      state.nonRemboursable ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable (-25%)</span></div>']) : '',
       (optionsMontant > 0 && salleTtc) ? h(['<div class="spr-recap-line"><span>Salle</span><span>', salleTtc, '</span></div>']) : '',
       optionsMontant > 0 ? h(['<div class="spr-recap-line"><span>Options</span><span>', fmtMontant(optionsMontant), '</span></div>']) : '',
       montantTtc ? h(['<div class="spr-recap-line spr-recap-total"><span>Montant', enLigne ? ' à régler' : ' estimé', ' TTC</span><span>', montantTtc, '</span></div>']) : '',
       montantHt ? h(['<div class="spr-recap-line spr-recap-ht-info"><span>dont HT</span><span>', montantHt, '</span></div>']) : '',
+      renderAnnonceRemise(),
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour4">← Retour</button>',
       '<button class="spr-btn spr-primary" id="spr-btn-envoyer"', state.loading ? ' disabled' : '', '>',
@@ -595,6 +638,7 @@
       '<div class="spr-subtitle">', montantTtc ? ('Montant à régler : ' + montantTtc + '.') : '',
       montantHt ? h([' <span class="spr-montant-ht-info">(dont ', montantHt, ')</span>']) : '',
       ' Paiement par carte via Stripe.</div>',
+      renderAnnonceRemise(),
       '<div id="spr-stripe-element" class="spr-stripe-element"><div class="spr-loading">Chargement du module de paiement…</div></div>',
       '<div id="spr-stripe-status" class="spr-stripe-status"></div>',
       '<div class="spr-actions">',
@@ -618,7 +662,7 @@
       // Fonction nommée (pas doRecherche directement) : un handler onclick reçoit le MouseEvent en
       // 1er argument, qui atterrirait sinon dans preferCode (§1.5.0, préremplissage) — sans effet
       // réel (aucune salle ne matche jamais un événement), mais pas la peine de compter dessus.
-      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = function () { doRecherche(); };
+      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = function () { state.nonRemboursable = false; doRecherche(); };
     } else if (state.step === 2) {
       document.querySelectorAll('input[name="spr-espace"]').forEach(function (r) {
         r.onchange = function (e) { state.selectedEspaceId = Number(e.target.value); render(); };
@@ -648,6 +692,7 @@
         if (byId(id)) byId(id).onchange = function (e) { state.contact[field] = e.target.value; };
       });
       if (byId('spr-commentaire')) byId('spr-commentaire').onchange = function (e) { state.commentaire = e.target.value; };
+      if (byId('spr-nanr-toggle')) byId('spr-nanr-toggle').onchange = toggleNonRemboursable;
       if (byId('spr-btn-retour3')) byId('spr-btn-retour3').onclick = function () { state.step = 3; render(); };
       if (byId('spr-btn-continuer4')) byId('spr-btn-continuer4').onclick = function () {
         if (!state.identifie && (!state.contact.raison_sociale || !state.contact.email)) {
@@ -678,7 +723,7 @@
   // présélectionner dans les résultats si elle y figure — sinon repli sur le 1er résultat
   // (comportement inchangé). La salle a pu être prise entre la recherche de dispo et l'arrivée ici :
   // ne jamais bloquer sur ce cas, juste retomber sur le choix normal.
-  function doRecherche(preferCode) {
+  function doRecherche(preferCode, conserverEtape) {
     var s = state.search;
     if (!s.date || !s.capaciteMin) {
       state.error = 'Merci de renseigner une date et un effectif.';
@@ -705,20 +750,30 @@
       + '&capacite_min=' + encodeURIComponent(s.capaciteMin) + '&unite=' + encodeURIComponent(s.unite)
       + '&duree=' + encodeURIComponent(computeDuree()) + '&type_reservation=' + encodeURIComponent(s.typeReservation)
       + (creneau ? '&creneau=' + encodeURIComponent(creneau) : '')
-      + (estHeure ? '&heure_debut=' + encodeURIComponent(s.heureDebut) + '&heure_fin=' + encodeURIComponent(s.heureFin) : '');
+      + (estHeure ? '&heure_debut=' + encodeURIComponent(s.heureDebut) + '&heure_fin=' + encodeURIComponent(s.heureFin) : '')
+      + '&non_remboursable=' + (state.nonRemboursable ? '1' : '0');
 
+    var espaceAvant = state.selectedEspaceId;
     api('/tunnel/disponibilite' + qs).then(function (data) {
       state.disponibilite = data;
       var prefere = preferCode ? data.espaces.filter(function (e) { return String(e.code) === String(preferCode); })[0] : null;
-      state.selectedEspaceId = prefere ? prefere.id : (data.espaces.length ? data.espaces[0].id : null);
+      var conserve = (!preferCode && espaceAvant) ? data.espaces.filter(function (e) { return e.id === espaceAvant; })[0] : null;
+      state.selectedEspaceId = prefere ? prefere.id : (conserve ? conserve.id : (data.espaces.length ? data.espaces[0].id : null));
       state.loading = false;
-      state.step = 2;
+      if (!conserverEtape) state.step = 2;
       render();
     }).catch(function (err) {
       state.loading = false;
       state.error = err.message;
       render();
     });
+  }
+
+  // NANR (29/08) : re-simule la disponibilite/le tarif avec le nouveau choix, SANS changer
+  // d'etape (l'utilisateur est deja a l'etape paiement quand il coche/decoche).
+  function toggleNonRemboursable() {
+    state.nonRemboursable = !state.nonRemboursable;
+    doRecherche(null, true);
   }
 
   function doListeAttente() {
@@ -853,6 +908,7 @@
       unite: s.unite,
       duree: computeDuree(),
       mode_paiement: state.modePaiement,
+      non_remboursable: state.nonRemboursable ? 1 : 0,
       commentaire_general: state.commentaire || undefined,
       options: options,
     };
