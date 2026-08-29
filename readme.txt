@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.7.2
+Stable tag: 1.7.3
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -51,6 +51,19 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.7.3 =
+* [tunnel de reservation] : la proposition d'identification (« Deja locataire S-PACE ? ») est
+  desormais visible des l'ecran de recherche et sur l'ecran Choix de la salle, plutot que la
+  seule etape Paiement - facultative dans tous les cas, le tunnel reste utilisable sans.
+* [tunnel de reservation] correctif : au retour du lien d'identification recu par email, le prix
+  affiche restait celui d'AVANT l'identification (remise absente a l'ecran Salle, aux options et
+  au recapitulatif) - la recherche de disponibilite n'etait jamais rejouee avec le lien desormais
+  connu, seule la sauvegarde locale (anonyme) etait reaffichee. Corrige : la disponibilite est
+  desormais toujours rafraichie avec le lien au retour, quelle que soit l'etape ou l'identification
+  a ete demandee.
+* [tunnel de reservation] : l'option de paiement « Facture fin de mois » affiche desormais le
+  meme libelle que le mail de confirmation, fourni par le serveur.
 
 = 1.7.2 =
 * [tunnel de reservation] : la remise (statut fidelite, code promo ou tarif non remboursable)

@@ -325,6 +325,23 @@
     return '<div class="spr-step-dot ' + cls + '" title="' + esc(label) + '">' + (cur > n ? '✓' : n) + '</div>';
   }
 
+  // Proposition d'identification, RÉUTILISÉE à plusieurs endroits du tunnel (correctif 29/08 —
+  // « proposer dès le début » plutôt que la limiter à l'étape Paiement). Un seul point de rendu
+  // et un seul point de câblage (bindEvents ci-dessous) pour ne jamais faire diverger le texte ou
+  // le comportement entre les emplacements. Déjà identifié : petit badge, pas de formulaire.
+  // Jamais bloquant — c'est une PROPOSITION (§ note de cadrage), le tunnel reste utilisable sans.
+  function renderIdentifyPrompt() {
+    if (state.identifie) {
+      return h(['<div class="spr-identified-chip">✓ Connecté', state.identiteInfo && state.identiteInfo.raison_sociale ? (' — ' + esc(state.identiteInfo.raison_sociale)) : '', '</div>']);
+    }
+    return h(['<div class="spr-identify-box spr-identify-compact">',
+      '<div class="spr-identify-title">Déjà locataire S-PACE ?</div>',
+      '<div class="spr-identify-sub">Identifiez-vous pour voir vos tarifs dédiés — facultatif, vous pouvez continuer sans.</div>',
+      '<div class="spr-identify-row"><input type="email" id="spr-identify-email" placeholder="votre@email.fr">',
+      '<button class="spr-btn" id="spr-btn-identify">Recevoir mon lien</button></div>',
+      '</div>']);
+  }
+
   // ---- Étape 1 : recherche ----
   function renderStepRecherche() {
     var s = state.search;
@@ -346,7 +363,12 @@
 
     var dejaClientHtml = h(['<div class="spr-already-client"><a href="', esc(ESPACE_CLIENT_URL), '" target="_blank" rel="noopener">Déjà client ? Retrouvez vos réservations</a></div>']);
 
-    return dejaClientHtml + h(['<div class="spr-card">',
+    // (correctif 29/08 — proposer l'identification DÈS LE DÉBUT) Un locataire S-PACE identifié
+    // voit ses tarifs dédiés (remise de statut) dès CET écran plutôt que de découvrir un prix
+    // différent plus tard dans le parcours — cf. renderIdentifyPrompt(). Reste FACULTATIF (§ note
+    // de cadrage) : un prospect qui ne se connecte pas ne voit rien de bloquant, juste ce lien
+    // discret en plus de celui qui mène à l'espace client (dejaClientHtml, ci-dessus).
+    return dejaClientHtml + renderIdentifyPrompt() + h(['<div class="spr-card">',
       '<div class="spr-title">Réserver un espace</div>',
       '<div class="spr-subtitle">Recherchez la disponibilité d\'une salle ou d\'un bureau S-PACE.</div>',
       '<div class="spr-grid-2">',
@@ -373,8 +395,13 @@
   // ---- Étape 2 : choix de la salle (tarif PAR SALLE) ----
   function renderStepSalle() {
     var d = state.disponibilite;
+    // (correctif 29/08) Bandeau d'identification repris ICI aussi, pas seulement à l'étape 1 : le
+    // préremplissage depuis [space_disponibilite] (preferCode/prefillDate/capacité, cf. init())
+    // saute directement l'étape 1 et atterrit ici — sans ce second point d'entrée, ce parcours-là
+    // ne verrait jamais la proposition avant l'étape Paiement.
+    var identifyBanner = renderIdentifyPrompt();
     if (!d || !d.espaces.length) {
-      return h(['<div class="spr-card">',
+      return identifyBanner + h(['<div class="spr-card">',
         '<div class="spr-title">Aucune disponibilité</div>',
         '<div class="spr-subtitle">Aucun espace n\'est libre pour ces critères. Laissez-nous vos coordonnées et nous vous recontacterons dès qu\'un créneau se libère.</div>',
         renderListeAttenteBox(),
@@ -426,7 +453,7 @@
       '</span>',
       '</div>', renderAnnonceRemise()]) : '';
 
-    return h(['<div class="spr-card">',
+    return identifyBanner + h(['<div class="spr-card">',
       '<div class="spr-title">Choisissez votre espace</div>',
       '<div class="spr-subtitle">', formatDateFr(state.search.date), ' — chaque salle est affichée à son tarif.</div>',
       roomsHtml,
@@ -514,7 +541,11 @@
       options.push({ value: 'credit_salle', title: 'Crédit salle', sub: 'Solde disponible : ' + op.credit_solde_heures + ' h' });
     }
     if (op.paiement_fin_mois_disponible) {
-      options.push({ value: 'sur_facture', title: 'Facture fin de mois', sub: 'Réservation confirmée immédiatement.' });
+      // (correctif 29/08 — ouverture du règlement sur facture) Le sous-texte vient TEL QUEL du
+      // serveur (paiement_fin_mois_libelle, /tunnel/options-paiement — lib/creditSalle.js::
+      // libelleFacturation) : même rédaction que le mail n°3, jamais réécrite ici. Repli si le
+      // champ manque (ancienne version d'API) : ne bloque pas l'affichage de l'option.
+      options.push({ value: 'sur_facture', title: 'Facture fin de mois', sub: op.paiement_fin_mois_libelle || 'Réservation confirmée immédiatement.' });
     }
     // §17.19 — Le POURQUOI, dès le choix. Quand le paiement en ligne n'est pas proposé, on affiche
     // TEL QUEL le message décidé par le serveur (options-paiement → paiement_en_ligne_message) :
@@ -661,6 +692,11 @@
   function bindEvents() {
     var byId = function (id) { return document.getElementById(id); };
 
+    // (correctif 29/08) Le bouton d'identification peut désormais apparaître à l'étape 1, 2 OU 4
+    // (renderIdentifyPrompt est repris à ces trois endroits) — câblé une seule fois ici, hors du
+    // if/else par étape ci-dessous, plutôt que dupliqué dans chaque branche.
+    if (byId('spr-btn-identify')) byId('spr-btn-identify').onclick = doIdentify;
+
     if (state.step === 1) {
       if (byId('spr-date')) byId('spr-date').onchange = function (e) { state.search.date = e.target.value; };
       if (byId('spr-type')) byId('spr-type').onchange = function (e) { state.search.typeReservation = e.target.value; };
@@ -693,7 +729,6 @@
       if (byId('spr-btn-retour2')) byId('spr-btn-retour2').onclick = function () { state.step = 2; render(); };
       if (byId('spr-btn-continuer3')) byId('spr-btn-continuer3').onclick = function () { state.step = 4; chargerOptionsPaiement(); };
     } else if (state.step === 4) {
-      if (byId('spr-btn-identify')) byId('spr-btn-identify').onclick = doIdentify;
       document.querySelectorAll('input[name="spr-mode"]').forEach(function (r) {
         r.onchange = function (e) { state.modePaiement = e.target.value; render(); };
       });
@@ -735,16 +770,19 @@
   // ne jamais bloquer sur ce cas, juste retomber sur le choix normal.
   function doRecherche(preferCode, conserverEtape) {
     var s = state.search;
+    // (correctif 29/08) Retourne toujours une Promise résolue, y compris sur ces deux sorties
+    // anticipées — doRecherche() est désormais chaînée par init() (reprise après identification,
+    // ci-dessous) : un appelant qui fait .then() dessus ne doit jamais tomber sur `undefined`.
     if (!s.date || !s.capaciteMin) {
       state.error = 'Merci de renseigner une date et un effectif.';
       render();
-      return;
+      return Promise.resolve();
     }
     var estHeure = s.unite === 'heure';
     if (estHeure && (!s.heureDebut || !s.heureFin)) {
       state.error = 'Merci de renseigner une heure de début et de fin.';
       render();
-      return;
+      return Promise.resolve();
     }
     state.loading = true;
     state.error = null;
@@ -768,7 +806,12 @@
       + (state.token ? '&token=' + encodeURIComponent(state.token) : '');
 
     var espaceAvant = state.selectedEspaceId;
-    api('/tunnel/disponibilite' + qs).then(function (data) {
+    // (correctif 29/08) Retourne désormais la promesse — jusqu'ici perdue, ce qui empêchait tout
+    // appelant (notamment la reprise après identification, cf. init()) de savoir QUAND le tarif
+    // rafraîchi était disponible avant d'enchaîner (chargerOptionsPaiement a besoin du montant
+    // à jour). Les appelants existants (onclick) ignorent la valeur de retour — comportement
+    // inchangé pour eux.
+    return api('/tunnel/disponibilite' + qs).then(function (data) {
       state.disponibilite = data;
       var prefere = preferCode ? data.espaces.filter(function (e) { return String(e.code) === String(preferCode); })[0] : null;
       var conserve = (!preferCode && espaceAvant) ? data.espaces.filter(function (e) { return e.id === espaceAvant; })[0] : null;
@@ -880,7 +923,12 @@
       localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
         search: state.search, disponibilite: state.disponibilite, selectedEspaceId: state.selectedEspaceId,
         selectedPauses: state.selectedPauses, selectedRestauration: state.selectedRestauration,
-        selectedAmenagementId: state.selectedAmenagementId, step: 4, savedAt: Date.now(),
+        selectedAmenagementId: state.selectedAmenagementId,
+        // (correctif 29/08) step RÉEL — plus le "4" figé d'avant. L'identification est désormais
+        // proposée dès l'étape 1/2 (renderIdentifyPrompt), pas seulement à l'étape Paiement :
+        // reprendre toujours à 4 aurait fait sauter la recherche/le choix de salle pour un client
+        // qui s'identifie avant même d'avoir cherché.
+        step: state.step, savedAt: Date.now(),
       }));
     } catch (e) { /* localStorage indisponible : tant pis, pas bloquant */ }
   }
@@ -1143,13 +1191,34 @@
         var snap = consumeSnapshot();
         if (snap) {
           Object.assign(state, {
-            search: snap.search, disponibilite: snap.disponibilite, selectedEspaceId: snap.selectedEspaceId,
+            search: snap.search, selectedEspaceId: snap.selectedEspaceId,
             selectedPauses: snap.selectedPauses, selectedRestauration: snap.selectedRestauration,
             selectedAmenagementId: snap.selectedAmenagementId,
           });
-          state.step = 4;
-          loadOptions();
-          chargerOptionsPaiement();
+          // (correctif 29/08 — diagnostic du jour) CAUSE CONFIRMÉE de la remise absente au
+          // retour : `state.disponibilite` était repris TEL QUEL du snapshot, or ce snapshot a
+          // été posé AVANT l'identification (le tarif qu'il porte est donc l'anonyme, sans
+          // remise). Le token est désormais connu -> on rejoue TOUJOURS /tunnel/disponibilite
+          // (avec le token) avant d'afficher quoi que ce soit, quelle que soit l'étape où
+          // l'identification a été demandée (1, 2 ou 4). On garde temporairement le tarif du
+          // snapshot le temps du rafraîchissement, pour éviter un écran "Aucune disponibilité"
+          // qui flasherait pendant l'aller-retour réseau.
+          state.disponibilite = snap.disponibilite;
+          var s = state.search;
+          if (s.date && s.capaciteMin) {
+            // Étape ciblée = celle quittée pour s'identifier, au minimum l'écran Salle (rien à
+            // afficher à l'étape Options/Paiement sans disponibilité déjà chargée).
+            state.step = Math.max(snap.step || 2, 2);
+            if (state.step >= 3) loadOptions();
+            doRecherche(null, true).then(function () {
+              if (state.step === 4) chargerOptionsPaiement();
+            });
+            return;
+          }
+          // Identification demandée dès l'étape 1, avant toute recherche (aucune date/effectif
+          // saisi à ce moment-là) : rien à recalculer — le token est posé, la remise s'appliquera
+          // dès la première recherche (§ « le prix est juste dès le début »).
+          render();
           return;
         }
       }
