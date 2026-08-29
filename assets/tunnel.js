@@ -11,6 +11,16 @@
   // l'espace client S-RESA historique (autre domaine) si ce réglage est vide.
   var ESPACE_CLIENT_URL = cfg.espaceClientUrl || 'https://portail.s-pace.fr/sresa/espace-client/';
   var SNAPSHOT_KEY = 'spr_pending_snapshot';
+  // (1.7.2) sessionStorage -> localStorage : sessionStorage est isole par ONGLET, or le lien
+  // d'identification recu par email ouvre presque toujours un NOUVEL onglet -> la sauvegarde
+  // devenait invisible au retour, le tunnel repartait de l'etape 1. localStorage survit au
+  // changement d'onglet, mais PERSISTE (contrairement a sessionStorage) : on horodate donc la
+  // sauvegarde (savedAt) et on ecarte tout ce qui date de plus de SNAPSHOT_TTL_MS, alignee sur
+  // la duree du lien lui-meme (token_connexion / vigie_client_sessions, `now() + interval
+  // '2 hours'`, routes/espaceClient.js cote S-RESA — PAS 30 minutes, chiffre initialement
+  // avance mais non retrouve en code au diagnostic du 29/08). Une sauvegarde plus vieille que
+  // le lien qui la ramene n'a de toute facon plus aucun sens.
+  var SNAPSHOT_TTL_MS = 2 * 60 * 60 * 1000;
   var STRIPE_JS = 'https://js.stripe.com/v3/';
 
   var root = document.getElementById('space-reservation-app');
@@ -751,7 +761,11 @@
       + '&duree=' + encodeURIComponent(computeDuree()) + '&type_reservation=' + encodeURIComponent(s.typeReservation)
       + (creneau ? '&creneau=' + encodeURIComponent(creneau) : '')
       + (estHeure ? '&heure_debut=' + encodeURIComponent(s.heureDebut) + '&heure_fin=' + encodeURIComponent(s.heureFin) : '')
-      + '&non_remboursable=' + (state.nonRemboursable ? '1' : '0');
+      + '&non_remboursable=' + (state.nonRemboursable ? '1' : '0')
+      // (1.7.2) Le token d'identification voyage desormais jusqu'a /tunnel/disponibilite — meme
+      // convention que /client/moi?token= — pour qu'un client deja identifie voie la remise qui
+      // s'applique DES cet ecran, au lieu de decouvrir un prix different au recapitulatif.
+      + (state.token ? '&token=' + encodeURIComponent(state.token) : '');
 
     var espaceAvant = state.selectedEspaceId;
     api('/tunnel/disponibilite' + qs).then(function (data) {
@@ -857,16 +871,49 @@
     });
   }
 
+  // (1.7.2) localStorage, pas sessionStorage — voir le commentaire sur SNAPSHOT_TTL_MS en tete
+  // de fichier. Les trois fonctions ci-dessous sont le seul point d'acces a SNAPSHOT_KEY,
+  // pour ne jamais desynchroniser l'ecriture (doIdentify), la lecture (INIT) et le nettoyage
+  // (fin de parcours / expiration).
+  function saveSnapshot() {
+    try {
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
+        search: state.search, disponibilite: state.disponibilite, selectedEspaceId: state.selectedEspaceId,
+        selectedPauses: state.selectedPauses, selectedRestauration: state.selectedRestauration,
+        selectedAmenagementId: state.selectedAmenagementId, step: 4, savedAt: Date.now(),
+      }));
+    } catch (e) { /* localStorage indisponible : tant pis, pas bloquant */ }
+  }
+
+  // Toujours CONSOMME (removeItem), qu'il soit exploitable ou non — pour ne jamais rejouer un
+  // snapshot perime ou deja utilise a un rechargement suivant. Renvoie null si absent, invalide,
+  // ou plus vieux que SNAPSHOT_TTL_MS.
+  // Deux onglets ouverts en meme temps sur une identification : localStorage est PARTAGE (pas
+  // isole par onglet comme sessionStorage) — le second doIdentify() ecraserait la sauvegarde du
+  // premier. Cas juge rare (un seul lien de connexion en vol a la fois, en pratique), signale
+  // ici plutot que sur-construit (ex. verrou multi-onglets).
+  function consumeSnapshot() {
+    var raw = null;
+    try {
+      raw = localStorage.getItem(SNAPSHOT_KEY);
+      localStorage.removeItem(SNAPSHOT_KEY);
+    } catch (e) { return null; }
+    if (!raw) return null;
+    try {
+      var snap = JSON.parse(raw);
+      if (!snap.savedAt || (Date.now() - snap.savedAt) > SNAPSHOT_TTL_MS) return null; // perime
+      return snap;
+    } catch (e) { return null; }
+  }
+
+  function clearSnapshot() {
+    try { localStorage.removeItem(SNAPSHOT_KEY); } catch (e) { /* noop */ }
+  }
+
   function doIdentify() {
     var email = document.getElementById('spr-identify-email').value.trim();
     if (!email) { state.error = 'Merci de renseigner votre email.'; render(); return; }
-    try {
-      sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
-        search: state.search, disponibilite: state.disponibilite, selectedEspaceId: state.selectedEspaceId,
-        selectedPauses: state.selectedPauses, selectedRestauration: state.selectedRestauration,
-        selectedAmenagementId: state.selectedAmenagementId, step: 4,
-      }));
-    } catch (e) { /* sessionStorage indisponible : tant pis, pas bloquant */ }
+    saveSnapshot();
 
     api('/client/demander-lien', { method: 'POST', body: JSON.stringify({ email: email, redirect_url: PAGE_URL }) })
       .then(function () {
@@ -923,6 +970,10 @@
 
     api('/tunnel/reserver', { method: 'POST', body: JSON.stringify(construirePayload()) })
       .then(function (data) {
+        // (1.7.2) Fin de parcours — reservation ou devis desormais crees cote serveur (les 3
+        // branches ci-dessous, y compris a_revoir) : plus besoin de reprendre une identification
+        // en cours de route, on efface la sauvegarde.
+        clearSnapshot();
         state.resultat = data;
         state.loading = false;
 
@@ -1089,22 +1140,17 @@
     var afterConfig = function () {
       if (tokenFromUrl) {
         state.token = tokenFromUrl;
-        var raw = null;
-        try { raw = sessionStorage.getItem(SNAPSHOT_KEY); } catch (e) { /* noop */ }
-        if (raw) {
-          try {
-            var snap = JSON.parse(raw);
-            Object.assign(state, {
-              search: snap.search, disponibilite: snap.disponibilite, selectedEspaceId: snap.selectedEspaceId,
-              selectedPauses: snap.selectedPauses, selectedRestauration: snap.selectedRestauration,
-              selectedAmenagementId: snap.selectedAmenagementId,
-            });
-            sessionStorage.removeItem(SNAPSHOT_KEY);
-            state.step = 4;
-            loadOptions();
-            chargerOptionsPaiement();
-            return;
-          } catch (e) { /* snapshot invalide, on repart de l'étape 1 */ }
+        var snap = consumeSnapshot();
+        if (snap) {
+          Object.assign(state, {
+            search: snap.search, disponibilite: snap.disponibilite, selectedEspaceId: snap.selectedEspaceId,
+            selectedPauses: snap.selectedPauses, selectedRestauration: snap.selectedRestauration,
+            selectedAmenagementId: snap.selectedAmenagementId,
+          });
+          state.step = 4;
+          loadOptions();
+          chargerOptionsPaiement();
+          return;
         }
       }
       // space_token prime sur le préremplissage (retour d'identification en cours de parcours) :
