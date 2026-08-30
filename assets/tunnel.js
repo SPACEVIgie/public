@@ -79,6 +79,11 @@
     siretConnuMessage: null, // {type:'succes'|'erreur'|'aucun_contact', text}
     siretConnuLoading: false,
     commentaire: '',
+    // (30/08 soir, correctif post-test Olivier) — une DEMANDE, jamais un accord : rien n'est ecrit
+    // dans sresa_jours.heure_ouverture_anticipee/heure_fermeture_tardive par ce parcours (colonnes
+    // posees PAR LE STAFF apres accord). Repart avec le commentaire, l'equipe est alertee par mail
+    // (notificationEquipeTunnel.js), le client lit "nous reviendrons vers vous" — sans promesse.
+    horaireAnticipe: { avant: false, avantHeure: '', apres: false, apresHeure: '' },
     loading: false,
     error: null,
     resultat: null,
@@ -408,7 +413,11 @@
   // Jamais bloquant — c'est une PROPOSITION (§ note de cadrage), le tunnel reste utilisable sans.
   function renderIdentifyPrompt() {
     if (state.identifie) {
-      return h(['<div class="spr-identified-chip">✓ Connecté', state.identiteInfo && state.identiteInfo.raison_sociale ? (' — ' + esc(state.identiteInfo.raison_sociale)) : '', '</div>']);
+      // (30/08 soir, correctif post-test Olivier) — la remise (si applicable) s'affiche desormais
+      // ICI, juste sous le badge, des l'etape 1 : jusqu'ici elle n'apparaissait qu'au recap/paiement,
+      // laissant croire pendant tout le parcours que rien n'etait applique. §25 : une remise n'est
+      // pas une action -> note discrete (renderAnnonceRemise, deja stylee --spr-note), pas un badge.
+      return h(['<div class="spr-identified-chip">✓ Connecté', state.identiteInfo && state.identiteInfo.raison_sociale ? (' — ' + esc(state.identiteInfo.raison_sociale)) : '', '</div>', renderAnnonceRemise()]);
     }
     return h(['<div class="spr-identify-box spr-identify-compact">',
       '<div class="spr-identify-title">Déjà locataire S-PACE ?</div>',
@@ -437,7 +446,9 @@
       '</div>',
       '<div class="spr-hint">Créneaux par tranches de ', pasMin, ' minutes.</div>']) : '';
 
-    var dejaClientHtml = h(['<div class="spr-already-client"><a href="', esc(ESPACE_CLIENT_URL), '" target="_blank" rel="noopener">Déjà client ? Retrouvez vos réservations</a></div>']);
+    // (30/08 soir) — masque une fois connecte : proposer une connexion a quelqu'un deja connecte
+    // n'a pas de sens (le lien vers l'espace client reste utile, mais plus ce bandeau-la).
+    var dejaClientHtml = state.identifie ? '' : h(['<div class="spr-already-client"><a href="', esc(ESPACE_CLIENT_URL), '" target="_blank" rel="noopener">Déjà client ? Retrouvez vos réservations</a></div>']);
 
     // (correctif 29/08 — proposer l'identification DÈS LE DÉBUT) Un locataire S-PACE identifié
     // voit ses tarifs dédiés (remise de statut) dès CET écran plutôt que de découvrir un prix
@@ -839,11 +850,46 @@
       nanrHtml,
       indispoNote,
       contactHtml,
+      siretConnuBloquant ? '' : renderHorairesAnticipes(),
       siretConnuBloquant ? '' : h(['<div class="spr-field"><label>Commentaire (optionnel)</label><textarea id="spr-commentaire" rows="3">', esc(state.commentaire), '</textarea></div>']),
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour3">← Retour</button>',
       siretConnuBloquant ? '' : '<button class="spr-btn spr-primary" id="spr-btn-continuer4">Continuer →</button>',
       '</div></div>']);
+  }
+
+  // Texte "commentaire" pour la demande d'horaires anticipes — rien ecrit dans sresa_jours par ce
+  // parcours (une demande n'est pas un accord) : juste un texte lisible par l'equipe, au meme
+  // endroit que le commentaire libre du client.
+  function texteHorairesAnticipes() {
+    var ha = state.horaireAnticipe;
+    var lignes = [];
+    if (ha.avant) lignes.push("Demande : arriver avant l'ouverture" + (ha.avantHeure ? (' vers ' + ha.avantHeure) : '') + '.');
+    if (ha.apres) lignes.push('Demande : partir après la fermeture' + (ha.apresHeure ? (' vers ' + ha.apresHeure) : '') + '.');
+    return lignes.join(' ');
+  }
+
+  // ---- Horaires anticipés (30/08 soir, correctif post-test Olivier) ----
+  // Une DEMANDE seulement — voir commentaire sur state.horaireAnticipe ci-dessus. Déclenche trois
+  // fragments de consigne côté staff s'ils sont un jour accordés (badge la veille, fenêtres,
+  // autonomie) : on ne les envoie donc JAMAIS depuis ce parcours, on se contente de signaler la
+  // demande à l'équipe (commentaire_general, lu par notificationEquipeTunnel.js).
+  function renderHorairesAnticipes() {
+    var ha = state.horaireAnticipe;
+    return h(['<div class="spr-field">',
+      '<label>Besoin d\'un horaire particulier ?</label>',
+      '<label class="spr-payment-option" style="display:flex;align-items:center;gap:8px;font-weight:normal;">',
+      '<input type="checkbox" id="spr-ha-avant"', ha.avant ? ' checked' : '', '> ',
+      "J'ai besoin d'arriver avant l'ouverture",
+      '</label>',
+      ha.avant ? h(['<div class="spr-field"><label>Heure d\'arrivée souhaitée (facultatif)</label><input type="time" id="spr-ha-avant-heure" value="', esc(ha.avantHeure), '"></div>']) : '',
+      '<label class="spr-payment-option" style="display:flex;align-items:center;gap:8px;font-weight:normal;">',
+      '<input type="checkbox" id="spr-ha-apres"', ha.apres ? ' checked' : '', '> ',
+      'Je dois partir après la fermeture',
+      '</label>',
+      ha.apres ? h(['<div class="spr-field"><label>Heure de départ souhaitée (facultatif)</label><input type="time" id="spr-ha-apres-heure" value="', esc(ha.apresHeure), '"></div>']) : '',
+      (ha.avant || ha.apres) ? h(['<div class="spr-hint">Ceci est une demande, pas une confirmation — nous reviendrons vers vous.</div>']) : '',
+      '</div>']);
   }
 
   // ---- Bloc coordonnées d'un NOUVEAU client (30/08, chantier SIRET dans le tunnel) ----
@@ -1110,6 +1156,10 @@
         render();
       };
       if (byId('spr-commentaire')) byId('spr-commentaire').onchange = function (e) { state.commentaire = e.target.value; };
+      if (byId('spr-ha-avant')) byId('spr-ha-avant').onchange = function (e) { state.horaireAnticipe.avant = e.target.checked; render(); };
+      if (byId('spr-ha-avant-heure')) byId('spr-ha-avant-heure').onchange = function (e) { state.horaireAnticipe.avantHeure = e.target.value; };
+      if (byId('spr-ha-apres')) byId('spr-ha-apres').onchange = function (e) { state.horaireAnticipe.apres = e.target.checked; render(); };
+      if (byId('spr-ha-apres-heure')) byId('spr-ha-apres-heure').onchange = function (e) { state.horaireAnticipe.apresHeure = e.target.value; };
       if (byId('spr-nanr-toggle')) byId('spr-nanr-toggle').onchange = toggleNonRemboursable;
       if (byId('spr-btn-retour3')) byId('spr-btn-retour3').onclick = function () { state.step = 3; render(); };
       if (byId('spr-btn-continuer4')) byId('spr-btn-continuer4').onclick = function () {
@@ -1133,6 +1183,16 @@
             }
           } else if (!state.contact.raison_sociale || !state.contact.email) {
             state.error = 'Merci de renseigner au moins votre nom et votre email.';
+            render();
+            return;
+          }
+          // (30/08 soir, correctif post-test Olivier) — telephone obligatoire, pro ET particulier :
+          // tous les refus de geste espace client renvoient vers "appelez-nous", l'equipe doit donc
+          // toujours avoir un numero pour rappeler. 10 chiffres — un numero etranger (belge, suisse)
+          // n'en fait pas 10 : signale, non assoupli pour l'instant (reserve documentee, pas un
+          // correctif de ce chantier).
+          if (!/^\d{10}$/.test((state.contact.telephone || '').replace(/[\s.\-]/g, ''))) {
+            state.error = 'Le téléphone doit comporter 10 chiffres.';
             render();
             return;
           }
@@ -1205,6 +1265,13 @@
     // inchangé pour eux.
     return api('/tunnel/disponibilite' + qs).then(function (data) {
       state.disponibilite = data;
+      // (30/08 soir, correctif post-test Olivier) — identifie/identite_info arrivent desormais avec
+      // CETTE reponse (routes/tunnel.js /disponibilite), pas seulement a l'etape 4
+      // (chargerOptionsPaiement) : le badge « Connecte » peut donc s'afficher des l'etape 1, y
+      // compris juste apres le rechargement automatique au retour d'un lien email (init() rejoue
+      // deja doRecherche() avec le token — seul l'affichage manquait).
+      state.identifie = !!data.identifie;
+      state.identiteInfo = data.identite_info || null;
       var prefere = preferCode ? data.espaces.filter(function (e) { return String(e.code) === String(preferCode); })[0] : null;
       var conserve = (!preferCode && espaceAvant) ? data.espaces.filter(function (e) { return e.id === espaceAvant; })[0] : null;
       state.selectedEspaceId = prefere ? prefere.id : (conserve ? conserve.id : (data.espaces.length ? data.espaces[0].id : null));
@@ -1472,7 +1539,10 @@
       duree: computeDuree(),
       mode_paiement: state.modePaiement,
       non_remboursable: state.nonRemboursable ? 1 : 0,
-      commentaire_general: state.commentaire || undefined,
+      // (30/08 soir) — la demande d'horaires anticipes voyage DANS le commentaire (aucune colonne
+      // sresa_jours touchee par ce parcours) : elle atteint l'equipe via le meme canal deja lu au
+      // mail de notification (notificationEquipeTunnel.js), sans creer un second mecanisme.
+      commentaire_general: [state.commentaire, texteHorairesAnticipes()].filter(Boolean).join('\n\n') || undefined,
       options: options,
     };
     if (!state.identifie) {
