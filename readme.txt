@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.8.2
+Stable tag: 1.9.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,20 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.0 =
+* [space_reservation] SIRET dans le tunnel : un nouveau client (absent de PCI) choisit
+  explicitement professionnel/particulier ; un professionnel saisit son SIRET (obligatoire,
+  14 chiffres), avec un bouton « Remplir depuis le SIRET » (jamais automatique, toujours
+  corrigeable) qui interroge recherche-entreprises.api.gouv.fr — raison sociale, adresse de
+  facturation, code NAF. Un établissement fermé est signalé (jamais bloquant, avec le
+  téléphone) ; un SIRET introuvable ne bloque pas non plus (saisie manuelle).
+* Un SIRET déjà connu de Vigie n'ouvre plus de formulaire de création : le tunnel propose de
+  recevoir le lien de connexion existant (2 heures, même mécanisme qu'ailleurs) après
+  vérification que l'email saisi correspond bien à ce tiers.
+* Un nouveau client (professionnel ou particulier, absent de PCI) ne voit plus le paiement en
+  ligne, le crédit salle ni la facture fin de mois — seule la demande de devis lui est
+  proposée ; un client déjà identifié par lien magique garde tous les modes, inchangé.
 
 = 1.8.2 =
 * [space_mon_espace] « Jamais un mur » : chaque geste refusé pour cause de fenêtre (ou pour une

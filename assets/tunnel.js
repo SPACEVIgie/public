@@ -62,7 +62,22 @@
     optionsPaiement: null,
     modePaiement: 'devis',
     nonRemboursable: false, // NANR (29/08) : opt-in, jamais coche par defaut
-    contact: { raison_sociale: '', nom: '', email: '', telephone: '' },
+    contact: { type: '', raison_sociale: '', nom: '', email: '', telephone: '', siret: '', adresse_facturation: '' },
+    // (30/08, chantier SIRET dans le tunnel) — un champ, pas une deduction (§1) : contact.type
+    // vaut '' tant que le client n'a rien choisi, 'professionnel' ou 'particulier' ensuite.
+    // siretLookup : reponse de GET /tunnel/siret/:siret (etat_administratif etablissement,
+    // deja_client, a_contact...) — null tant qu'aucune recherche n'a abouti.
+    siretLookup: null,
+    siretLookupLoading: false,
+    // Instantane CAPTURE au moment du prereplissage (bouton), garde MEME SI le client corrige
+    // ensuite raison_sociale/adresse/naf — sert a batir "l'API disait / il a saisi" cote mail
+    // equipe (§5), jamais affiche au client.
+    siretApiSnapshot: null,
+    // Flot "SIRET deja connu" (§3) : reutilise POST /client/demander-lien (existant, meme lien a
+    // 2h) apres verification que l'email correspond bien A CE tiers (POST /verifier-email-siret).
+    siretConnuEmail: '',
+    siretConnuMessage: null, // {type:'succes'|'erreur'|'aucun_contact', text}
+    siretConnuLoading: false,
     commentaire: '',
     loading: false,
     error: null,
@@ -746,29 +761,38 @@
 
     var op = state.optionsPaiement || {};
     var options = [{ value: 'devis', title: 'Demande de devis', sub: 'Nous vous recontactons pour finaliser votre réservation.' }];
-    // §4.9 — Paiement en ligne par carte : proposé UNIQUEMENT si le SERVEUR le déclare possible
-    // (Stripe configuré, réservation sur un seul jour…). La règle est portée par l'endpoint
-    // /options-paiement (§17.14 : pas de règle de bascule figée côté plugin). Visible DÈS LE CHOIX.
-    if (op.paiement_en_ligne_disponible) {
-      options.push({ value: 'en_ligne', title: 'Paiement en ligne par carte', sub: 'Réservation confirmée immédiatement après le paiement (paiement sécurisé Stripe).' });
-    }
-    if (op.credit_disponible) {
-      options.push({ value: 'credit_salle', title: 'Crédit salle', sub: 'Solde disponible : ' + op.credit_solde_heures + ' h' });
-    }
-    if (op.paiement_fin_mois_disponible) {
-      // (correctif 29/08 — ouverture du règlement sur facture) Le sous-texte vient TEL QUEL du
-      // serveur (paiement_fin_mois_libelle, /tunnel/options-paiement — lib/creditSalle.js::
-      // libelleFacturation) : même rédaction que le mail n°3, jamais réécrite ici. Repli si le
-      // champ manque (ancienne version d'API) : ne bloque pas l'affichage de l'option.
-      options.push({ value: 'sur_facture', title: 'Facture fin de mois', sub: op.paiement_fin_mois_libelle || 'Réservation confirmée immédiatement.' });
+    // (30/08, chantier SIRET dans le tunnel) — « Un nouveau client NE RÉSERVE PAS EN LIGNE » :
+    // un client NON identifié (pas de lien magique résolu) ne voit QUE « Demande de devis »,
+    // quoi que dise le serveur sur la disponibilité du paiement en ligne/crédit/facture — leur
+    // proposer un mode que POST /reserver refusera ensuite (403, §3 du cadrage) serait un mur
+    // après coup. Un client identifié garde tous les modes, inchangé.
+    if (state.identifie) {
+      // §4.9 — Paiement en ligne par carte : proposé UNIQUEMENT si le SERVEUR le déclare possible
+      // (Stripe configuré, réservation sur un seul jour…). La règle est portée par l'endpoint
+      // /options-paiement (§17.14 : pas de règle de bascule figée côté plugin). Visible DÈS LE CHOIX.
+      if (op.paiement_en_ligne_disponible) {
+        options.push({ value: 'en_ligne', title: 'Paiement en ligne par carte', sub: 'Réservation confirmée immédiatement après le paiement (paiement sécurisé Stripe).' });
+      }
+      if (op.credit_disponible) {
+        options.push({ value: 'credit_salle', title: 'Crédit salle', sub: 'Solde disponible : ' + op.credit_solde_heures + ' h' });
+      }
+      if (op.paiement_fin_mois_disponible) {
+        // (correctif 29/08 — ouverture du règlement sur facture) Le sous-texte vient TEL QUEL du
+        // serveur (paiement_fin_mois_libelle, /tunnel/options-paiement — lib/creditSalle.js::
+        // libelleFacturation) : même rédaction que le mail n°3, jamais réécrite ici. Repli si le
+        // champ manque (ancienne version d'API) : ne bloque pas l'affichage de l'option.
+        options.push({ value: 'sur_facture', title: 'Facture fin de mois', sub: op.paiement_fin_mois_libelle || 'Réservation confirmée immédiatement.' });
+      }
     }
     // §17.19 — Le POURQUOI, dès le choix. Quand le paiement en ligne n'est pas proposé, on affiche
     // TEL QUEL le message décidé par le serveur (options-paiement → paiement_en_ligne_message) :
     // multi-jours, créneau contesté, hors-horaires, délai court (message combiné pour hors+délai).
     // Aucune phrase codée en dur ici ; le plugin n'invente ni ne décide (§17.14). Pour le hors-horaires,
     // on complète avec le SURCOÛT chiffré (accès autonome) fourni par regles_horaires, s'il est non nul.
+    // RÉSERVÉ au client identifié (ci-dessus) : pour un nouveau client, l'absence de paiement en
+    // ligne n'est pas un motif d'indisponibilité ponctuelle, c'est la politique du tunnel.
     var indispoNote = '';
-    if (!op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
+    if (state.identifie && !op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
       var reg = op.regles_horaires;
       var surcout = '';
       if (reg && reg.hors_horaires && reg.hors_horaires.concerne && Number(reg.hors_horaires.surcout_ht) > 0) {
@@ -785,13 +809,7 @@
         '</label>']);
     }).join('');
 
-    var contactHtml = state.identifie ? '' : h(['<div class="spr-grid-2">',
-      '<div class="spr-field"><label>Société</label><input type="text" id="spr-c-raison" value="', esc(state.contact.raison_sociale), '"></div>',
-      '<div class="spr-field"><label>Nom du contact</label><input type="text" id="spr-c-nom" value="', esc(state.contact.nom), '"></div>',
-      '</div><div class="spr-grid-2">',
-      '<div class="spr-field"><label>Email</label><input type="email" id="spr-c-email" value="', esc(state.contact.email), '"></div>',
-      '<div class="spr-field"><label>Téléphone</label><input type="tel" id="spr-c-telephone" value="', esc(state.contact.telephone), '"></div>',
-      '</div>']);
+    var contactHtml = state.identifie ? '' : renderContactNouveauClient();
 
     // NANR (29/08, décision Olivier) : proposé seulement si éligible (réservation à 21 jours
     // calendaires minimum), jamais coché par défaut — un choix qui se présente comme un choix,
@@ -806,6 +824,14 @@
         '</label>']);
     }
 
+    // (30/08) SIRET déjà connu (§3) : le parcours normal (commentaire + Continuer) n'a plus lieu
+    // d'être — la seule action possible est de demander le lien de connexion (panneau rendu par
+    // renderContactNouveauClient, déjà inclus dans contactHtml). On garde « ← Retour » (permet
+    // de changer de salle) mais on retire « Continuer » : POST /reserver la refuserait de toute
+    // façon (409, §3), autant ne pas présenter un bouton qui mène à un mur.
+    var siretConnuBloquant = !state.identifie && state.contact.type === 'professionnel'
+      && state.siretLookup && state.siretLookup.deja_client;
+
     return h(['<div class="spr-card">',
       '<div class="spr-title">Paiement &amp; coordonnées</div>',
       identifBlock,
@@ -813,11 +839,107 @@
       nanrHtml,
       indispoNote,
       contactHtml,
-      '<div class="spr-field"><label>Commentaire (optionnel)</label><textarea id="spr-commentaire" rows="3">', esc(state.commentaire), '</textarea></div>',
+      siretConnuBloquant ? '' : h(['<div class="spr-field"><label>Commentaire (optionnel)</label><textarea id="spr-commentaire" rows="3">', esc(state.commentaire), '</textarea></div>']),
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour3">← Retour</button>',
-      '<button class="spr-btn spr-primary" id="spr-btn-continuer4">Continuer →</button>',
+      siretConnuBloquant ? '' : '<button class="spr-btn spr-primary" id="spr-btn-continuer4">Continuer →</button>',
       '</div></div>']);
+  }
+
+  // ---- Bloc coordonnées d'un NOUVEAU client (30/08, chantier SIRET dans le tunnel) ----
+  // §1 : choix pro/particulier explicite (un champ, jamais déduit). §2 : préremplissage par
+  // BOUTON (jamais automatique), correction toujours possible, établissement fermé signalé sans
+  // bloquer. §3 : un SIRET déjà connu de Vigie n'affiche plus le formulaire de création — juste
+  // le renvoi vers le lien de connexion existant (2h, POST /client/demander-lien, aucun second
+  // mécanisme). Extrait de renderStepPaiement pour rester lisible.
+  function renderContactNouveauClient() {
+    var typeHtml = h(['<div class="spr-field">',
+      '<label>Vous réservez en tant que</label>',
+      '<div class="spr-payment-choice">',
+      '<label class="spr-payment-option', state.contact.type === 'professionnel' ? ' spr-selected' : '', '">',
+      '<input type="radio" name="spr-c-type" value="professionnel"', state.contact.type === 'professionnel' ? ' checked' : '', '>',
+      '<div class="spr-po-title">Professionnel</div></label>',
+      '<label class="spr-payment-option', state.contact.type === 'particulier' ? ' spr-selected' : '', '">',
+      '<input type="radio" name="spr-c-type" value="particulier"', state.contact.type === 'particulier' ? ' checked' : '', '>',
+      '<div class="spr-po-title">Particulier</div></label>',
+      '</div></div>']);
+
+    if (!state.contact.type) {
+      // Rien d'autre tant que le choix n'est pas fait — §1 « un champ, pas une déduction ».
+      return h(['<div class="spr-contact-nouveau">', typeHtml, '</div>']);
+    }
+
+    if (state.contact.type === 'particulier') {
+      return h(['<div class="spr-contact-nouveau">', typeHtml,
+        '<div class="spr-grid-2">',
+        '<div class="spr-field"><label>Nom complet</label><input type="text" id="spr-c-raison" value="', esc(state.contact.raison_sociale), '"></div>',
+        '<div class="spr-field"><label>Téléphone</label><input type="tel" id="spr-c-telephone" value="', esc(state.contact.telephone), '"></div>',
+        '</div>',
+        '<div class="spr-field"><label>Email</label><input type="email" id="spr-c-email" value="', esc(state.contact.email), '"></div>',
+        '</div>']);
+    }
+
+    // --- Professionnel ---
+    var lk = state.siretLookup;
+
+    // §3 — SIRET déjà connu de Vigie : on n'affiche plus le formulaire de création, seulement le
+    // renvoi vers le lien de connexion. « Personne à qui envoyer le lien » (a_contact:false) ≠
+    // « mauvais email » (correspond:false) — deux messages différents, jamais un mur muet.
+    if (lk && lk.deja_client) {
+      var panneauConnu;
+      if (lk.a_contact === false) {
+        panneauConnu = h(['<div class="spr-banner spr-info">',
+          "Ce SIRET a déjà un compte chez nous, mais nous n'avons aucun contact enregistré pour l'y joindre. ",
+          'Merci de nous contacter directement : <strong>05 46 50 46 86</strong>.</div>']);
+      } else {
+        panneauConnu = h(['<div class="spr-identify-box">',
+          '<div class="spr-identify-title">Ce SIRET a déjà un compte chez nous.</div>',
+          '<div class="spr-identify-sub">Saisissez votre adresse email — nous vous envoyons un lien pour réserver (valable 2 heures).</div>',
+          '<div class="spr-identify-row"><input type="email" id="spr-siret-connu-email" placeholder="votre@email.fr" value="', esc(state.siretConnuEmail), '">',
+          '<button class="spr-btn" id="spr-btn-siret-connu-envoyer"', state.siretConnuLoading ? ' disabled' : '', '>',
+          state.siretConnuLoading ? 'Vérification…' : 'Recevoir mon lien', '</button></div>',
+          state.siretConnuMessage ? h(['<div class="spr-hint', state.siretConnuMessage.type === 'erreur' ? ' spr-hint-indispo' : '', '">', esc(state.siretConnuMessage.text), '</div>']) : '',
+          '</div>']);
+      }
+      return h(['<div class="spr-contact-nouveau">', typeHtml,
+        panneauConnu,
+        '<div class="spr-hint"><a href="#" id="spr-siret-connu-retour">Ce n\'est pas le bon SIRET ?</a></div>',
+        '</div>']);
+    }
+
+    var siretHint = '';
+    if (state.siretLookupLoading) {
+      siretHint = h(['<div class="spr-hint">Recherche en cours…</div>']);
+    } else if (lk && lk.trouve === false) {
+      // §2 — SIRET introuvable : ne bloque jamais, juste un rappel que la saisie reste manuelle
+      // (un SIRET tout neuf peut ne pas être encore publié).
+      siretHint = h(['<div class="spr-hint">SIRET introuvable auprès du répertoire des entreprises — vous pouvez saisir les informations manuellement ci-dessous.</div>']);
+    } else if (lk && lk.trouve && lk.etablissement_ferme) {
+      // §2 — Établissement fermé : SIGNALÉ, jamais bloquant — le client sait peut-être quelque
+      // chose que l'API ignore encore (§ « l'API peut être en retard sur la réalité »).
+      siretHint = h(['<div class="spr-hint spr-hint-indispo">',
+        'Cet établissement est fermé — vérifiez le numéro. Vous pouvez tout de même continuer, ou nous appeler au <strong>05 46 50 46 86</strong>.',
+        '</div>']);
+    }
+
+    return h(['<div class="spr-contact-nouveau">', typeHtml,
+      '<div class="spr-grid-2">',
+      '<div class="spr-field"><label>SIRET</label>',
+      '<div class="spr-identify-row"><input type="text" inputmode="numeric" maxlength="14" id="spr-c-siret" placeholder="14 chiffres" value="', esc(state.contact.siret), '">',
+      '<button class="spr-btn" id="spr-btn-siret-lookup"', state.siretLookupLoading ? ' disabled' : '', '>Remplir depuis le SIRET</button></div>',
+      siretHint,
+      '</div>',
+      '<div class="spr-field"><label>Nom du contact</label><input type="text" id="spr-c-nom" value="', esc(state.contact.nom), '"></div>',
+      '</div>',
+      '<div class="spr-grid-2">',
+      '<div class="spr-field"><label>Raison sociale</label><input type="text" id="spr-c-raison" value="', esc(state.contact.raison_sociale), '"></div>',
+      '<div class="spr-field"><label>Adresse de facturation</label><input type="text" id="spr-c-adresse" value="', esc(state.contact.adresse_facturation), '"></div>',
+      '</div>',
+      '<div class="spr-grid-2">',
+      '<div class="spr-field"><label>Email</label><input type="email" id="spr-c-email" value="', esc(state.contact.email), '"></div>',
+      '<div class="spr-field"><label>Téléphone</label><input type="tel" id="spr-c-telephone" value="', esc(state.contact.telephone), '"></div>',
+      '</div>',
+      '</div>']);
   }
 
   // ---- Étape 5 : récapitulatif ----
@@ -962,18 +1084,58 @@
       document.querySelectorAll('input[name="spr-mode"]').forEach(function (r) {
         r.onchange = function (e) { state.modePaiement = e.target.value; render(); };
       });
-      ['spr-c-raison', 'spr-c-nom', 'spr-c-email', 'spr-c-telephone'].forEach(function (id) {
-        var field = { 'spr-c-raison': 'raison_sociale', 'spr-c-nom': 'nom', 'spr-c-email': 'email', 'spr-c-telephone': 'telephone' }[id];
+      // (30/08) Changer de type pro/particulier repart d'un formulaire propre — un SIRET/une
+      // recherche déjà faits pour l'autre type n'ont pas de sens une fois basculé.
+      document.querySelectorAll('input[name="spr-c-type"]').forEach(function (r) {
+        r.onchange = function (e) {
+          state.contact.type = e.target.value;
+          state.siretLookup = null; state.siretApiSnapshot = null;
+          state.siretConnuEmail = ''; state.siretConnuMessage = null;
+          render();
+        };
+      });
+      ['spr-c-raison', 'spr-c-nom', 'spr-c-email', 'spr-c-telephone', 'spr-c-siret', 'spr-c-adresse'].forEach(function (id) {
+        var field = {
+          'spr-c-raison': 'raison_sociale', 'spr-c-nom': 'nom', 'spr-c-email': 'email',
+          'spr-c-telephone': 'telephone', 'spr-c-siret': 'siret', 'spr-c-adresse': 'adresse_facturation',
+        }[id];
         if (byId(id)) byId(id).onchange = function (e) { state.contact[field] = e.target.value; };
       });
+      if (byId('spr-btn-siret-lookup')) byId('spr-btn-siret-lookup').onclick = doSiretLookup;
+      if (byId('spr-siret-connu-email')) byId('spr-siret-connu-email').onchange = function (e) { state.siretConnuEmail = e.target.value; };
+      if (byId('spr-btn-siret-connu-envoyer')) byId('spr-btn-siret-connu-envoyer').onclick = doSiretConnuEnvoyer;
+      if (byId('spr-siret-connu-retour')) byId('spr-siret-connu-retour').onclick = function (e) {
+        e.preventDefault();
+        state.siretLookup = null; state.siretConnuEmail = ''; state.siretConnuMessage = null;
+        render();
+      };
       if (byId('spr-commentaire')) byId('spr-commentaire').onchange = function (e) { state.commentaire = e.target.value; };
       if (byId('spr-nanr-toggle')) byId('spr-nanr-toggle').onchange = toggleNonRemboursable;
       if (byId('spr-btn-retour3')) byId('spr-btn-retour3').onclick = function () { state.step = 3; render(); };
       if (byId('spr-btn-continuer4')) byId('spr-btn-continuer4').onclick = function () {
-        if (!state.identifie && (!state.contact.raison_sociale || !state.contact.email)) {
-          state.error = 'Merci de renseigner au moins la société et l\'email de contact.';
-          render();
-          return;
+        if (!state.identifie) {
+          // §1 — un champ, pas une déduction : le choix doit être fait avant tout le reste.
+          if (!state.contact.type) {
+            state.error = 'Merci d\'indiquer si vous réservez en tant que professionnel ou particulier.';
+            render();
+            return;
+          }
+          if (state.contact.type === 'professionnel') {
+            if (!/^\d{14}$/.test(state.contact.siret || '')) {
+              state.error = 'Le SIRET doit comporter 14 chiffres.';
+              render();
+              return;
+            }
+            if (!state.contact.raison_sociale || !state.contact.adresse_facturation || !state.contact.email) {
+              state.error = 'Merci de renseigner au moins la raison sociale, l\'adresse de facturation et l\'email.';
+              render();
+              return;
+            }
+          } else if (!state.contact.raison_sociale || !state.contact.email) {
+            state.error = 'Merci de renseigner au moins votre nom et votre email.';
+            render();
+            return;
+          }
         }
         state.error = null;
         state.step = 5;
@@ -1203,6 +1365,80 @@
       });
   }
 
+  // (30/08, chantier SIRET dans le tunnel) — préremplissage §2 : un BOUTON, jamais automatique
+  // (l'utilisateur déclenche). Consulte d'abord si ce SIRET est déjà un tiers actif chez nous
+  // (§3, la vérification qui compte est refaite côté serveur à l'envoi — ceci n'est qu'un
+  // confort d'écran, orienter tout de suite vers « demandez votre lien » plutôt que de laisser
+  // remplir un formulaire pour rien). Sinon, préremplit depuis recherche-entreprises.api.gouv.fr
+  // et capture l'instantané (siretApiSnapshot) pour le mail équipe (§5) — même si le client
+  // corrige ensuite les champs, l'instantané reste ce que l'API disait AU MOMENT du clic.
+  function doSiretLookup() {
+    var siret = (state.contact.siret || '').replace(/\s/g, '');
+    if (!/^\d{14}$/.test(siret)) {
+      state.error = 'Le SIRET doit comporter 14 chiffres.';
+      render();
+      return;
+    }
+    state.error = null;
+    state.siretLookupLoading = true;
+    state.siretLookup = null;
+    render();
+
+    api('/tunnel/siret/' + siret)
+      .then(function (data) {
+        state.siretLookupLoading = false;
+        state.siretLookup = data;
+        if (!data.deja_client && data.trouve) {
+          // Préremplissage — le client garde la main pour corriger chaque champ ensuite (§2).
+          state.contact.raison_sociale = data.raison_sociale || state.contact.raison_sociale;
+          state.contact.adresse_facturation = data.adresse || state.contact.adresse_facturation;
+          state.siretApiSnapshot = { raison_sociale: data.raison_sociale || null, adresse: data.adresse || null, naf: data.naf || null };
+        }
+        render();
+      }).catch(function (err) {
+        state.siretLookupLoading = false;
+        // §2 — une panne de recherche ne bloque JAMAIS la saisie manuelle.
+        state.siretLookup = { valide: true, trouve: false, deja_client: false };
+        state.error = err.message;
+        render();
+      });
+  }
+
+  // §3 — SIRET déjà connu : vérifie que l'email saisi correspond BIEN à CE tiers précis (jamais
+  // un email au hasard) avant d'appeler POST /client/demander-lien (existant, même lien à 2h —
+  // aucun second mécanisme créé ici). Un email qui ne correspond pas affiche le message dédié
+  // (téléphone), sans jamais révéler quelles adresses existent réellement.
+  function doSiretConnuEnvoyer() {
+    var email = (state.siretConnuEmail || '').trim();
+    if (!email) { state.error = 'Merci de renseigner votre email.'; render(); return; }
+    state.error = null;
+    state.siretConnuLoading = true;
+    state.siretConnuMessage = null;
+    render();
+
+    api('/tunnel/verifier-email-siret', {
+      method: 'POST', body: JSON.stringify({ siret: state.contact.siret, email: email }),
+    }).then(function (v) {
+      if (!v.correspond) {
+        state.siretConnuLoading = false;
+        state.siretConnuMessage = { type: 'erreur', text: "Nous ne reconnaissons pas cette adresse. Vous pouvez nous appeler au 05 46 50 46 86." };
+        render();
+        return;
+      }
+      saveSnapshot();
+      return api('/client/demander-lien', { method: 'POST', body: JSON.stringify({ email: email, redirect_url: PAGE_URL }) })
+        .then(function () {
+          state.siretConnuLoading = false;
+          state.siretConnuMessage = { type: 'succes', text: 'Email envoyé ! Cliquez sur le lien reçu pour revenir ici identifié(e) (valable 2 heures).' };
+          render();
+        });
+    }).catch(function (err) {
+      state.siretConnuLoading = false;
+      state.error = err.message;
+      render();
+    });
+  }
+
   function construirePayload() {
     var s = state.search;
     var estHeure = s.unite === 'heure';
@@ -1239,7 +1475,19 @@
       commentaire_general: state.commentaire || undefined,
       options: options,
     };
-    if (!state.identifie) payload.contact = state.contact;
+    if (!state.identifie) {
+      // (30/08) contact.siret/adresse_facturation/type déjà portés par state.contact ; le NAF et
+      // l'instantané API (§5, « ce que l'API disait ») viennent de siretApiSnapshot — jamais
+      // saisis à la main, jamais montrés au client, capturés au moment du clic « Remplir depuis
+      // le SIRET » et conservés même si le client corrige raison sociale/adresse ensuite.
+      var snap = state.siretApiSnapshot;
+      payload.contact = Object.assign({}, state.contact, {
+        naf: snap ? snap.naf : undefined,
+        siret_api_raison_sociale: snap ? snap.raison_sociale : undefined,
+        siret_api_adresse: snap ? snap.adresse : undefined,
+        siret_api_naf: snap ? snap.naf : undefined,
+      });
+    }
     return payload;
   }
 
