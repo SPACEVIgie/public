@@ -665,7 +665,14 @@
       }).join(''),
       '</select></div>']) : '';
 
-    return h(['<div class="spr-card">',
+    // (correctif 30/08 soir) Repris ICI aussi, comme aux étapes 1, 2 et 4 : sans ce bandeau, un
+    // client identifié dès l'étape 2 voyait le badge « ✓ Connecté » disparaître à cette étape
+    // avant de réapparaître à l'étape 4 — incohérence d'affichage relevée en traçant le trou
+    // principal (cf. init()), pas un bug de logique mais une inconsistance qui laisse croire que
+    // rien n'était pris en compte entre-temps.
+    var identifyBanner = renderIdentifyPrompt();
+
+    return identifyBanner + h(['<div class="spr-card">',
       '<div class="spr-title">Options complémentaires</div>',
       '<div class="spr-subtitle">Facultatif — vous pouvez continuer sans rien sélectionner.</div>',
       pausesHtml, restauRow, amenagementHtml,
@@ -1827,15 +1834,32 @@
             });
             return;
           }
-          // Identification demandée dès l'étape 1, avant toute recherche (aucune date/effectif
-          // saisi à ce moment-là) : rien à recalculer — le token est posé, la remise s'appliquera
-          // dès la première recherche (§ « le prix est juste dès le début »).
-          render();
-          return;
+          // Snapshot présent mais recherche pas encore remplie (identification demandée dès
+          // l'étape 1) : rien à rejouer côté recherche, mais l'identité, elle, se résout quand
+          // même juste en dessous — même bloc que le cas « pas de snapshot du tout ».
         }
+        // (correctif 30/08 soir) Trou comblé : jusqu'ici, quand aucune recherche n'avait encore
+        // été lancée au moment de s'identifier (snapshot absent, ou présent mais incomplet), rien
+        // ne rejouait /tunnel/disponibilite ni ne posait state.identifie — le badge/la remise
+        // restaient invisibles jusqu'à ce que le client relance une recherche à la main. C'est le
+        // cas le plus naturel (le bandeau d'identification est AU-DESSUS du formulaire), confirmé
+        // par les logs nginx du test d'Olivier du 30/08 (18h45 et 21h29 : aucune recherche n'a
+        // précédé la demande de lien) — cf. /home/ubuntu/maj-doc-token-etape1-2026-08-30.md.
+        // Corrigé en résolvant l'identité DÈS L'ARRIVÉE, sans attendre une recherche : on reprend
+        // le chemin déjà utilisé et fonctionnel de l'étape 4 (chargerOptionsPaiement ci-dessus,
+        // GET /client/moi?token=) plutôt que d'en écrire un troisième. Couvre indifféremment le
+        // lien envoyé depuis le bandeau du tunnel et celui envoyé depuis l'espace client (bouton
+        // « + Nouvelle réservation », qui repasse aussi ?space_token= vers cette même page).
+        api('/client/moi?token=' + encodeURIComponent(state.token)).then(function (moi) {
+          state.identifie = true;
+          state.identiteInfo = moi;
+          render();
+        }).catch(function () {
+          // Token invalide/expiré/révoqué : jamais bloquant — écran anonyme normal, comme avant.
+          render();
+        });
+        return;
       }
-      // space_token prime sur le préremplissage (retour d'identification en cours de parcours) :
-      // ne jamais écraser une reprise de session par une recherche automatique.
       if (pretAPreremplir) { doRecherche(prefillEspaceCode); return; }
       render();
     };

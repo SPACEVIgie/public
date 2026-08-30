@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.2
+Stable tag: 1.9.3
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,15 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.3 =
+* [space_reservation] Identite resolue des l'arrivee sur le tunnel quand un lien de
+  connexion est utilise, meme si aucune recherche n'a encore ete lancee (cas le plus
+  frequent : le bandeau d'identification est au-dessus du formulaire) -- jusqu'ici le
+  badge Connecte, la remise fidelite et le tarif prefere restaient invisibles tant que
+  le client ne relancait pas une recherche a la main. Reprend le meme appel que l'etape
+  Paiement (deja fonctionnel), sans nouveau mecanisme. L'etape Options (3) affiche
+  desormais elle aussi le badge, comme les etapes 1, 2 et 4.
 
 = 1.9.2 =
 * [space_reservation] La majoration jour férié (appliquée automatiquement depuis le 16/08,
