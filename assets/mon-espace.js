@@ -367,6 +367,22 @@
       '</div>']);
   }
 
+  // (30/08 soir, § « jamais un mur » — décision Olivier : « J-1 oui, mais un message du type :
+  // appelez-nous, on trouvera une solution ») — le motif est calculé UNE SEULE FOIS, dans le cœur
+  // partagé (window.SresaEspaceClientCore.motifEffectifIndisponible/motifJourSuppressionIndisponible,
+  // portail/sresa/public/espace-client.js), pour qu'espace-client.js ET cette page affichent
+  // EXACTEMENT le même texte — jamais recopié ici (même argument que l'incident 69eff8a cité plus
+  // haut : deux implémentations divergent toujours à terme). Avant ce correctif, cette page grisait
+  // déjà les boutons (peutEditerEffectif/peutSupprimerCeJour ci-dessous) mais n'affichait AUCUN motif
+  // nulle part — un bouton grisé, ou carrément absent, sans un mot pour expliquer pourquoi.
+  // La vérification `typeof … === 'function'` protège seulement contre un script de cœur en cache
+  // encore ancien (CDN/Autoptimize) le temps que le nouveau se propage — jamais un scénario normal.
+  function motifBannerHtml(motif) {
+    if (!motif) return '';
+    var classe = motif.classe === 'ok' ? 'spme-ok' : 'spme-info';
+    return h(['<div class="spme-banner ', classe, '" style="margin-top:8px;">', esc(motif.texte), '</div>']);
+  }
+
   function renderDetail() {
     var d = state.detail;
     if (!d) return '<div class="spme-loading">Chargement…</div>';
@@ -379,6 +395,10 @@
     // stock déjà décrémenté…) restent arbitrées côté SERVEUR, jamais devinées ici.
     var peutEditerEffectif = core && window.SresaEspaceClientCore.effectifModifiable(d);
     var gestesIndisponibles = !core && d.statut_annulation === 'active';
+    var motifEffectif = core && typeof window.SresaEspaceClientCore.motifEffectifIndisponible === 'function'
+      ? window.SresaEspaceClientCore.motifEffectifIndisponible(d) : null;
+    var motifJourSuppr = core && typeof window.SresaEspaceClientCore.motifJourSuppressionIndisponible === 'function'
+      ? window.SresaEspaceClientCore.motifJourSuppressionIndisponible(d) : null;
 
     var jours = (d.jours || []).map(function (j) {
       var valeur = j.nombre_personnes_definitif != null ? j.nombre_personnes_definitif : j.nombre_personnes_devis;
@@ -440,6 +460,8 @@
       gestesIndisponibles ? h(['<div class="spme-banner spme-info" style="margin-top:8px;">',
         "Modification de l'effectif et suppression de jour temporairement indisponibles. Contactez-nous si besoin.",
         '</div>']) : '',
+      motifBannerHtml(motifEffectif),
+      motifBannerHtml(motifJourSuppr),
       '<div class="spme-jours">', jours, '</div>',
       blocAnnulation,
       '</div>']);

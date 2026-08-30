@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.8.1
+Stable tag: 1.8.2
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,20 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.8.2 =
+* [space_mon_espace] « Jamais un mur » : chaque geste refusé pour cause de fenêtre (ou pour une
+  cause permanente — annulation en cours, tarif non remboursable, tarif figé à la main) se termine
+  désormais par une issue explicite — « Appelez-nous au 05 46 50 46 86, on trouvera une solution » —
+  au lieu d'un simple renvoi vers « l'équipe ». Même texte partout (API S-RESA et les deux écrans
+  client), calculé une seule fois par le module partagé (`window.SresaEspaceClientCore`).
+* Le détail d'une réservation affiche désormais le MOTIF au-dessus des boutons « Modifier
+  l'effectif »/« Supprimer ce jour » grisés ou absents (annulation en cours, définitif, NANR, tarif
+  figé à la main) — jusqu'ici ces boutons se grisaient ou disparaissaient sans un mot pour
+  l'expliquer.
+* « Supprimer ce jour » tient désormais compte du tarif figé à la main (le bouton disparaissait
+  déjà pour un tarif non remboursable, mais pas pour un tarif fixé manuellement — pourtant bloqué
+  côté serveur depuis la version 1.8.0).
 
 = 1.8.1 =
 * [space_mon_espace] deux nouveaux gestes libre-service, jour par jour, portés par le même module
