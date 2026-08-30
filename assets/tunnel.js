@@ -194,16 +194,58 @@
     return (t && !t.erreur && t.libelle_annonce) ? h(['<div class="spr-annonce-remise">', esc(t.libelle_annonce), '</div>']) : '';
   }
 
+  // MAJORATION JOUR FÉRIÉ (§17.24, chantier « visible côté client », 30/08 soir) — une ligne PAR
+  // jour férié validé (routes/tunnel.js POST /tunnel/options-paiement → majoration_ferie_lignes),
+  // MÊME libellé que la ligne réelle facturée (lib/tarificationOptions.js) : le client revoit
+  // exactement le même texte au récapitulatif, dans le mail de confirmation et sur la fiche staff.
+  // AUTO-APPLIQUÉE, JAMAIS COCHABLE (§ « elle découle de la date, comme la remise fidélité découle
+  // du statut ») : rendue en ligne de récapitulatif (spr-recap-line, comme Salle/Options) — PAS
+  // dans la modale de pause, ce n'est pas un choix — avec une note discrète expliquant le pourquoi
+  // (jamais une justification longue).
+  function renderMajorationFerie() {
+    var lignes = majorationFerieLignes();
+    if (!lignes.length) return '';
+    var linesHtml = lignes.map(function (l) {
+      return '<div class="spr-recap-line"><span>' + esc(l.libelle) + '</span><span>' + fmtMontant(l.montant_ttc) + '</span></div>';
+    }).join('');
+    return h([linesHtml,
+      '<div class="spr-hint" style="margin:2px 0 10px;">Le centre est fermé ce jour-là : cette majoration ',
+      "s'applique automatiquement et n'est pas modifiable.</div>"]);
+  }
+
+  // MAJORATION JOUR FÉRIÉ (§17.24, chantier « visible côté client », 30/08 soir) — chargée à
+  // l'étape 4 (chargerOptionsPaiement → POST /tunnel/options-paiement, qui reçoit déjà la date
+  // choisie) et posée dans state.optionsPaiement, jamais dans state.optionsCatalogue : ce n'est
+  // PAS une option cochable (§ « ne pas la rendre cochable » — elle découle de la date, comme la
+  // remise fidélité découle du statut). Absente/0 tant que l'étape 4 n'a pas été atteinte : le
+  // total aux étapes 1-3 reste salle + options choisies, comme avant.
+  function majorationFerieLignes() {
+    var op = state.optionsPaiement;
+    return (op && Array.isArray(op.majoration_ferie_lignes)) ? op.majoration_ferie_lignes : [];
+  }
+  function montantMajorationFerieTtc() {
+    var op = state.optionsPaiement;
+    return op && op.majoration_ferie_ttc ? Number(op.majoration_ferie_ttc) : 0;
+  }
+  function montantMajorationFerieHt() {
+    var op = state.optionsPaiement;
+    return op && op.majoration_ferie_ht ? Number(op.majoration_ferie_ht) : 0;
+  }
+
   // §4.9/§4.17 ext. — BUG CORRIGÉ (24/08) : ce montant ne portait QUE la salle (t.tarif_ttc), sans
   // jamais ajouter les options choisies à l'étape 3 (pauses/restauration/aménagement) — alors que le
   // serveur, LUI, encaisse bien salle + options (routes/tunnel.js POST /reserver, calculerOptionsReservation
   // appelé après insertion des options, cf. lib/tarificationOptions.js). Le client payait donc le bon
   // montant (vérifié sur WEB-223/224 : Stripe a bien débité salle+options), mais voyait un total plus
   // bas AVANT de payer — décalage entre l'écran et la carte bancaire. Inclut désormais montantOptionsTtc().
+  // (30/08 soir) Inclut aussi montantMajorationFerieTtc() — même correctif, pour la même raison :
+  // un férié validé bascule la demande en devis (jamais un paiement Stripe immédiat, cf.
+  // routes/tunnel.js `demandeSeule`), donc aucun risque d'écart avec une carte déjà débitée ; mais
+  // le montant « estimé » affiché avant envoi doit rester honnête, lui aussi.
   function montantSelection() {
     var t = tarifSelection();
     if (!t || t.erreur || t.tarif_ttc == null) return null;
-    return round2(Number(t.tarif_ttc) + montantOptionsTtc());
+    return round2(Number(t.tarif_ttc) + montantOptionsTtc() + montantMajorationFerieTtc());
   }
 
   // (25/08, §4) Pendant HT de montantSelection() — MÊME donnée serveur (tarif_ht_net) + MÊME
@@ -212,7 +254,7 @@
   function montantSelectionHt() {
     var t = tarifSelection();
     if (!t || t.erreur || t.tarif_ht_net == null) return null;
-    return round2(Number(t.tarif_ht_net) + montantOptionsHt());
+    return round2(Number(t.tarif_ht_net) + montantOptionsHt() + montantMajorationFerieHt());
   }
 
   // Montant HT des OPTIONS sélectionnées à l'étape 3 — MÊME FORMULE que le serveur
@@ -809,6 +851,14 @@
       if (reg && reg.hors_horaires && reg.hors_horaires.concerne && Number(reg.hors_horaires.surcout_ht) > 0) {
         surcout = ' Supplément d\'accès hors horaires estimé : +' + Number(reg.hors_horaires.surcout_ht).toFixed(2) + ' € HT.';
       }
+      // (30/08 soir, §17.24) — le message serveur dit déjà « une majoration jour férié s'applique »
+      // (lib/reglesHoraires.js::construireMessageCombine), sans chiffre. On complète ICI avec le
+      // montant réel (majorationFerieLignes(), chargé par le même appel /options-paiement) — même
+      // logique que le surcoût hors-horaires ci-dessus, jamais un second texte inventé.
+      var majoLignes = majorationFerieLignes();
+      if (majoLignes.length) {
+        surcout += ' Majoration : +' + fmtMontant(montantMajorationFerieTtc()) + '.';
+      }
       indispoNote = h(['<div class="spr-hint spr-hint-indispo">', esc(op.paiement_en_ligne_message), esc(surcout), '</div>']);
     }
 
@@ -996,6 +1046,12 @@
     // le client voie explicitement ce qu'il paie en plus de la salle (jamais un total muet).
     var salleTtc = fmtTtc(tarifSelection());
     var optionsMontant = montantOptionsTtc();
+    // (30/08 soir, §17.24) — une majoration jour férié ne doit jamais gonfler un total « Salle »
+    // muet sans qu'on voie POURQUOI : si elle est seule (aucune autre option), la ligne Salle doit
+    // quand même se détailler, sinon le client verrait « Majoration : 60 € / Total : X € » sans
+    // jamais savoir ce que vaut la salle seule.
+    var majorationLignes = majorationFerieLignes();
+    var showSalleLine = (optionsMontant > 0 || majorationLignes.length > 0) && salleTtc;
     var montantTtc = fmtMontantTotal();
     // §4 « à l'écran de paiement, le TTC reste dominant, le HT en information » — cette étape
     // précède l'envoi/le paiement (mode déjà choisi) : même hiérarchie qu'à l'étape 7 ci-dessous.
@@ -1010,8 +1066,9 @@
       '<div class="spr-recap-line"><span>Effectif</span><span>', esc(state.search.capaciteMin), ' personnes</span></div>',
       '<div class="spr-recap-line"><span>Paiement</span><span>', modeLabels[state.modePaiement] || state.modePaiement, '</span></div>',
       state.nonRemboursable ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable (-25%)</span></div>']) : '',
-      (optionsMontant > 0 && salleTtc) ? h(['<div class="spr-recap-line"><span>Salle</span><span>', salleTtc, '</span></div>']) : '',
+      showSalleLine ? h(['<div class="spr-recap-line"><span>Salle</span><span>', salleTtc, '</span></div>']) : '',
       optionsMontant > 0 ? h(['<div class="spr-recap-line"><span>Options</span><span>', fmtMontant(optionsMontant), '</span></div>']) : '',
+      renderMajorationFerie(),
       montantTtc ? h(['<div class="spr-recap-line spr-recap-total"><span>Montant', enLigne ? ' à régler' : ' estimé', ' TTC</span><span>', montantTtc, '</span></div>']) : '',
       montantHt ? h(['<div class="spr-recap-line spr-recap-ht-info"><span>dont HT</span><span>', montantHt, '</span></div>']) : '',
       renderAnnonceRemise(),

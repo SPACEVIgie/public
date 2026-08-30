@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.1
+Stable tag: 1.9.2
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,14 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.2 =
+* [space_reservation] La majoration jour férié (appliquée automatiquement depuis le 16/08,
+  jamais montrée jusqu'ici) apparaît désormais au récapitulatif : une ligne « Jour férié —
+  <nom du férié> (<date>) » avec son montant, comme les autres lignes de prix — non cochable,
+  elle découle de la date, comme la remise fidélité découle du statut du client. Le montant
+  « estimé » affiché avant l'envoi de la demande l'inclut désormais aussi. Le message expliquant
+  pourquoi le paiement en ligne n'est pas proposé ce jour-là porte maintenant le montant.
 
 = 1.9.0 =
 * [space_reservation] SIRET dans le tunnel : un nouveau client (absent de PCI) choisit
