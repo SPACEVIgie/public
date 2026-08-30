@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.7.4
+Stable tag: 1.7.5
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -51,6 +51,15 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.7.5 =
+* [space_mon_espace] correctif régression du 29/08 : la liste « Mes réservations » n'affichait
+  plus aucune date (numéro + statut seuls). Cause : le correctif serveur du 29/08 (période réelle
+  calculée depuis les jours effectifs plutôt que le premier bloc) a retiré `date_debut`/`date_fin`
+  de `GET /client/reservations` au profit de `premier_jour`/`dernier_jour`/`nb_jours` — ce fichier
+  n'avait pas suivi. La liste affiche de nouveau la période ("2 septembre 2026", ou "4 journées,
+  du 23 novembre au 14 décembre 2026" pour une réservation sur plusieurs jours non consécutifs),
+  triée du plus proche au plus lointain ("À venir"), les réservations passées à part.
 
 = 1.7.4 =
 * [tunnel de reservation] refonte de l'ecran Options : les six lignes de pause (une par formule)

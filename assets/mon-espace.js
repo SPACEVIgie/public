@@ -89,6 +89,23 @@
     return d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear();
   }
 
+  // (30/08, régression du 29/08) — la LISTE d'une réservation affichait r.date_debut/r.date_fin
+  // (reservations_salles, un seul bloc — le même défaut « 23 novembre » pour une résa de 4 jours
+  // jusqu'au 14 décembre que côté serveur, cf. routes/espaceClient.js) jusqu'à ce que le correctif du
+  // 29/08 (commit s-pace-suite 69eff8a) fasse porter GET /client/reservations par premier_jour/
+  // dernier_jour/nb_jours (agrégés depuis sresa_jours) à la place — SANS ces deux champs, qui
+  // n'existent plus du tout sur cette route. Ce fichier n'avait pas suivi (dernier commit avant celui-
+  // ci : 25/08, montant HT) : formatDateFr(r.date_debut) retournait '' (undefined), d'où l'absence
+  // totale de date constatée le 29/08 au soir — numéro + statut seuls. Même calcul que
+  // portail/sresa/public/espace-client.js::labelPeriode (l'autre écran, déjà à jour depuis le 29/08) :
+  // une seule date si un seul jour, sinon toujours "N journées, du … au …", même si les jours sont
+  // consécutifs (un intervalle seul laisserait croire à une occupation continue).
+  function formatPeriode(r) {
+    if (!r.premier_jour) return '';
+    if (Number(r.nb_jours) <= 1) return formatDateFr(r.premier_jour);
+    return r.nb_jours + ' journées, du ' + formatDateFr(r.premier_jour) + ' au ' + formatDateFr(r.dernier_jour);
+  }
+
   // (25/08, §4) TTC toujours affiché ; HT en information QUAND il est fiable. Un montant_ttc
   // MANUEL (staff, cf. précédent du 16/08 — « le miroir HT/TTC n'était pas un bug, le tarif était
   // manuel ») n'a pas de contrepartie HT fiable : mieux vaut alors ne montrer QUE le TTC que
@@ -173,20 +190,34 @@
         '<p class="spme-text">Aucune réservation trouvée pour ce compte.</p></div>']);
     }
 
-    var lignes = state.reservations.map(function (r) {
+    function ligneResa(r) {
       var badgeAnnul = r.statut_annulation && LABELS_ANNULATION[r.statut_annulation]
         ? h(['<span class="spme-badge spme-badge-warn">', esc(LABELS_ANNULATION[r.statut_annulation]), '</span>']) : '';
       return h(['<div class="spme-resa-row" data-id="', r.id, '">',
         '<div class="spme-resa-main">',
         '<div class="spme-resa-titre">', esc(r.espace_nom || 'Réservation'), ' — ', esc(r.numero_devis || ('#' + r.id)), '</div>',
-        '<div class="spme-resa-dates">', esc(formatDateFr(r.date_debut)),
-        (r.date_fin && String(r.date_fin).slice(0, 10) !== String(r.date_debut).slice(0, 10)) ? (' – ' + esc(formatDateFr(r.date_fin))) : '',
-        '</div></div>',
+        '<div class="spme-resa-dates">', esc(formatPeriode(r)), '</div></div>',
         '<div class="spme-resa-statuts">',
         '<span class="spme-badge">', esc(LABELS_RESERVATION[r.statut_reservation] || r.statut_reservation), '</span>',
         badgeAnnul,
         '</div></div>']);
-    }).join('');
+    }
+
+    // Ordre : plus proche au plus lointain, passées à part (même tri que
+    // portail/sresa/public/espace-client.js::afficherListe, posé le 29/08 — l'API renvoie déjà
+    // est_passee calculé côté SQL sur CURRENT_DATE, jamais new Date() ici, cf. piège UTC+2 pg). "À
+    // venir" inclut les réservations en cours, triées du plus proche au plus lointain ; "Passées",
+    // séparées, du plus récent au plus ancien.
+    var aVenir = state.reservations.filter(function (r) { return !r.est_passee; })
+      .sort(function (a, b) { return a.premier_jour < b.premier_jour ? -1 : 1; });
+    var passees = state.reservations.filter(function (r) { return r.est_passee; })
+      .sort(function (a, b) { return a.dernier_jour > b.dernier_jour ? -1 : 1; });
+
+    function section(titre, liste) {
+      return liste.length ? h(['<h3 class="spme-section-titre">', titre, '</h3>', liste.map(ligneResa).join('')]) : '';
+    }
+
+    var lignes = section('À venir', aVenir) + section('Passées', passees);
 
     return h(['<div class="spme-card">', entete, erreurHtml, '<div class="spme-resa-list">', lignes, '</div></div>']);
   }
