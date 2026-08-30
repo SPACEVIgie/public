@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.8.0
+Stable tag: 1.8.1
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -15,7 +15,8 @@ Ajoute le shortcode `[space_reservation]` : une salle de réunion ou un bureau p
 réservé en ligne (recherche de disponibilité, options, devis ou paiement selon le profil
 du client). Ajoute aussi `[space_mon_espace]` : l'espace client complet, sur le site
 (email → lien reçu → liste des réservations → détail → demande d'annulation, modification
-de l'effectif et suppression d'un jour). Ajoute enfin
+de l'effectif, suppression d'un jour, ajout/retrait d'une pause et modification de
+l'aménagement de la salle). Ajoute enfin
 `[space_disponibilite]` : sur la page d'une salle, la prochaine date libre pour une durée
 choisie. Le plugin ne stocke aucune donnée — tout transite directement, depuis le
 navigateur du visiteur, vers l'API S-RESA.
@@ -52,6 +53,18 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.8.1 =
+* [space_mon_espace] deux nouveaux gestes libre-service, jour par jour, portés par le même module
+  partagé que les gestes 1.8.0 : « Ajouter/retirer une pause » et « Modifier l'aménagement de la
+  salle ». Aucun paiement en ligne ni montant affiché — une pause ajoutée ou retirée fait l'objet
+  d'une facturation complémentaire (ou d'un ajustement) traitée par l'équipe, jamais en ligne.
+  L'aménagement n'a aucun effet sur le prix ni sur le statut de la réservation ; sa fenêtre de
+  modification reste ouverte plus longtemps que celle des pauses (rien n'y est commandé chez un
+  fournisseur). Toutes les règles (fenêtres, tarif figé à la main, tarif non remboursable, stock
+  déjà sorti) restent arbitrées côté serveur, jamais devinées ici — comme en 1.8.0.
+* Zéro ligne recopiée dans ce plugin pour ces deux gestes : ils viennent du module partagé
+  (`window.SresaEspaceClientCore`) déjà chargé depuis la version 1.8.0.
 
 = 1.8.0 =
 * [space_mon_espace] deux nouveaux gestes libre-service, jour par jour, jusqu'ici réservés à

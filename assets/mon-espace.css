@@ -107,3 +107,13 @@
 .spme-effectif-input:focus { outline: none; border-color: var(--spme-bordeaux); }
 .spme-btn.spme-btn-danger { border-color: var(--spme-alert); color: var(--spme-alert); }
 .spme-btn.spme-btn-danger:hover { background: var(--spme-alert-bg); border-color: var(--spme-alert); }
+
+/* 30/08, gestes 3 (pauses) & 4 (aménagement) — même famille visuelle que .spme-jour-gestes/
+   .spme-annuler-box ci-dessus : un panneau dépliable par jour, jamais de modale. */
+.spme-jours-gestion { border: 1px dashed var(--spme-border); border-radius: 12px; padding: 12px 14px; margin: 4px 0 10px; }
+.spme-select, input[type="time"].spme-pause-heure {
+  padding: 8px 10px; border: 1px solid var(--spme-border); border-radius: 9px;
+  font-size: 13.5px; font-family: inherit; color: var(--spme-text); background: #fff;
+}
+.spme-select:focus, input[type="time"].spme-pause-heure:focus { outline: none; border-color: var(--spme-bordeaux); }
+.spme-select.spme-pause-formule, .spme-select.spme-amenagement-select { width: 100%; margin-top: 4px; }

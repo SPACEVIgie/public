@@ -70,6 +70,18 @@
     // que annulationMotif/annulationEnvoyee ci-dessus, jamais de modale) :
     // { jourId, loading:true } | { jourId, confirmingDelete:true, libelleHtml } | { jourId, deleting:true } | { jourId, error }
     jourSupprConfirm: null,
+    // (30/08, gestes 3 & 4) — au plus UNE zone "pauses" OU "aménagement" ouverte à la fois (un seul
+    // jour), même principe que jourSupprConfirm ci-dessus : évite plusieurs formulaires actifs en
+    // même temps sur un écran mobile étroit.
+    pausesJourId: null, // jour dont le panneau pauses est ouvert (ou null)
+    pausesListe: null, // pauses du jour ouvert, une fois chargées
+    pauseAjoutConfirm: null, // { confirmingAjout:true, message } | { ajoutEnCours:true } | { error }
+    pauseRetraitConfirm: null, // { pauseId, confirmingRetrait:true, message } | { pauseId, retraitEnCours:true } | { pauseId, error }
+    formulesPause: null, // catalogue mis en cache (statique pour la session)
+    amenagementJourId: null, // jour dont le panneau aménagement est ouvert (ou null)
+    amenagementApercu: null, // { mail4DejaEnvoye } du jour ouvert
+    amenagementCatalogue: null, // catalogue mis en cache
+    amenagementMsg: null, // message d'erreur du panneau ouvert
   };
 
   function api(path, opts) {
@@ -279,6 +291,82 @@
     return '';
   }
 
+  // ===================== GESTES 3 (pauses) & 4 (aménagement), 30/08 =====================
+  // Même famille que renderJourSupprZone ci-dessus : appellent UNIQUEMENT
+  // window.SresaEspaceClientCore, aucune règle de verrou recopiée, AUCUN montant affiché (décision
+  // Olivier 30/08 — les aperçus ne portent qu'un texte fixe). Geste 3 = confirmation en deux temps
+  // (un effet réel : stock à l'échéance, facturation complémentaire) ; geste 4 = simple clic (aucun
+  // effet prix/stock), comme le geste 2 (effectif).
+
+  function renderPausesZone(jourId) {
+    if (state.pausesJourId !== jourId) return '';
+    if (!state.pausesListe) return '<p class="spme-text">Chargement…</p>';
+    var lignes = state.pausesListe.map(function (p) {
+      var retraitZone = '';
+      var rc = state.pauseRetraitConfirm;
+      if (rc && rc.pauseId === p.id) {
+        if (rc.retraitEnCours) retraitZone = '<p class="spme-text">Retrait…</p>';
+        else if (rc.error) retraitZone = h(['<div class="spme-banner spme-error">', esc(rc.error), '</div>']);
+        else if (rc.confirmingRetrait) {
+          retraitZone = h(['<div class="spme-annuler-box">',
+            '<p class="spme-text">', esc(rc.message), '</p>',
+            '<button class="spme-btn spme-btn-danger spme-btn-pause-retrait-confirmer" data-pause-id="', p.id, '" data-jour-id="', jourId, '">Oui, retirer cette pause</button>',
+            '<button class="spme-btn spme-btn-pause-retrait-annuler">Non</button>',
+            '</div>']);
+        }
+      }
+      var boutonRetrait = p.peut_retirer && !(rc && rc.pauseId === p.id)
+        ? h(['<button class="spme-btn spme-btn-danger spme-btn-pause-retrait" data-pause-id="', p.id, '" data-jour-id="', jourId, '">Retirer</button>'])
+        : (p.peut_retirer ? '' : '<span class="spme-sub">déjà réalisée</span>');
+      return h(['<div class="spme-jour-row"><span>', esc(String(p.heure_pause).slice(0, 5)), ' — ', esc(p.formule_nom), ' (', p.nombre_personnes, ' pers.)</span>', boutonRetrait, '</div>', retraitZone]);
+    }).join('') || '<p class="spme-text">Aucune pause sur ce jour.</p>';
+
+    var formules = state.formulesPause || [];
+    var options = formules.map(function (f) { return h(['<option value="', f.id, '">', esc(f.nom), '</option>']); }).join('');
+    var ajoutZone = '';
+    var ac = state.pauseAjoutConfirm;
+    if (ac) {
+      if (ac.ajoutEnCours) ajoutZone = '<p class="spme-text">Ajout…</p>';
+      else if (ac.error) ajoutZone = h(['<div class="spme-banner spme-error">', esc(ac.error), '</div>']);
+      else if (ac.confirmingAjout) {
+        ajoutZone = h(['<div class="spme-annuler-box">',
+          '<p class="spme-text">', esc(ac.message), '</p>',
+          '<button class="spme-btn spme-btn-primary spme-btn-pause-ajout-confirmer" data-jour-id="', jourId, '">Oui, ajouter cette pause</button>',
+          '<button class="spme-btn spme-btn-pause-ajout-annuler">Non</button>',
+          '</div>']);
+      }
+    }
+    return h(['<div class="spme-jours-gestion">', lignes,
+      '<div class="spme-identify-title" style="margin-top:10px;">Ajouter une pause</div>',
+      '<select class="spme-select spme-pause-formule" data-jour-id="', jourId, '">', options, '</select>',
+      '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">',
+      '<input type="time" class="spme-pause-heure" data-jour-id="', jourId, '" value="10:30">',
+      '<input type="number" min="1" class="spme-effectif-input spme-pause-effectif" data-jour-id="', jourId, '" placeholder="Effectif">',
+      '<button class="spme-btn spme-btn-pause-ajout-demander" data-jour-id="', jourId, '">Ajouter cette pause</button>',
+      '</div>', ajoutZone, '</div>']);
+  }
+
+  function renderAmenagementZone(jourId) {
+    if (state.amenagementJourId !== jourId) return '';
+    if (state.amenagementMsg) return h(['<div class="spme-banner spme-error">', esc(state.amenagementMsg), '</div>']);
+    if (!state.amenagementApercu || !state.amenagementCatalogue) return '<p class="spme-text">Chargement…</p>';
+    var jour = (state.detail.jours || []).filter(function (j) { return j.id === jourId; })[0];
+    var options = ['<option value="">Aucun (configuration standard)</option>'].concat(
+      state.amenagementCatalogue.map(function (a) {
+        var selected = jour && jour.amenagement_id === a.id ? ' selected' : '';
+        return h(['<option value="', a.id, '"', selected, '>', esc(a.nom), '</option>']);
+      })
+    ).join('');
+    var avert = state.amenagementApercu.mail4DejaEnvoye
+      ? '<div class="spme-banner spme-info">Les consignes de préparation ont déjà été envoyées pour cette réservation — notre équipe vous confirmera le nouvel aménagement si nécessaire.</div>'
+      : '';
+    return h(['<div class="spme-jours-gestion">', avert,
+      '<label class="spme-identify-title">Aménagement de la salle</label>',
+      '<select class="spme-select spme-amenagement-select" data-jour-id="', jourId, '">', options, '</select>',
+      '<button class="spme-btn spme-btn-amenagement-maj" data-jour-id="', jourId, '" style="margin-top:8px;">Mettre à jour</button>',
+      '</div>']);
+  }
+
   function renderDetail() {
     var d = state.detail;
     if (!d) return '<div class="spme-loading">Chargement…</div>';
@@ -305,7 +393,13 @@
           '<button class="spme-btn spme-btn-effectif" data-jour-id="', j.id, '"', peutEditerEffectif ? '' : ' disabled', '>Mettre à jour</button>',
           afficherBoutonSuppr ? h(['<button class="spme-btn spme-btn-danger spme-btn-jour-suppr" data-jour-id="', j.id, '">Supprimer ce jour</button>']) : '',
           '</div>',
-          renderJourSupprZone(j.id)]) : '']);
+          renderJourSupprZone(j.id),
+          '<div class="spme-jour-row"><span>', j.nb_pauses > 0 ? (j.nb_pauses + ' pause(s)') : 'Aucune pause', '</span>',
+          '<button class="spme-btn spme-btn-pauses-toggle" data-jour-id="', j.id, '">Gérer les pauses</button></div>',
+          renderPausesZone(j.id),
+          '<div class="spme-jour-row"><span>Aménagement — ', esc(j.amenagement_nom || 'configuration standard'), '</span>',
+          '<button class="spme-btn spme-btn-amenagement-toggle" data-jour-id="', j.id, '">Modifier</button></div>',
+          renderAmenagementZone(j.id)]) : '']);
     }).join('');
 
     var montantManuel = d.montant_ttc != null; // cf. fmtMontant ci-dessus
@@ -363,7 +457,12 @@
     });
 
     var retour = root.querySelector('.spme-btn-retour');
-    if (retour) retour.onclick = function () { state.vue = 'liste'; state.detail = null; state.annulationEnvoyee = null; state.jourSupprConfirm = null; render(); };
+    if (retour) retour.onclick = function () {
+      state.vue = 'liste'; state.detail = null; state.annulationEnvoyee = null; state.jourSupprConfirm = null;
+      state.pausesJourId = null; state.pausesListe = null; state.pauseAjoutConfirm = null; state.pauseRetraitConfirm = null;
+      state.amenagementJourId = null; state.amenagementApercu = null; state.amenagementMsg = null;
+      render();
+    };
 
     var motif = root.querySelector('.spme-motif');
     if (motif) motif.onchange = function (e) { state.annulationMotif = e.target.value; };
@@ -384,6 +483,35 @@
     });
     root.querySelectorAll('.spme-btn-jour-suppr-annuler').forEach(function (btn) {
       btn.onclick = function () { state.jourSupprConfirm = null; render(); };
+    });
+
+    // (30/08) gestes 3 & 4.
+    root.querySelectorAll('.spme-btn-pauses-toggle').forEach(function (btn) {
+      btn.onclick = function () { doTogglePauses(Number(btn.getAttribute('data-jour-id'))); };
+    });
+    root.querySelectorAll('.spme-btn-pause-ajout-demander').forEach(function (btn) {
+      btn.onclick = function () { doPauseAjoutDemander(Number(btn.getAttribute('data-jour-id'))); };
+    });
+    root.querySelectorAll('.spme-btn-pause-ajout-confirmer').forEach(function (btn) {
+      btn.onclick = function () { doPauseAjoutConfirmer(Number(btn.getAttribute('data-jour-id'))); };
+    });
+    root.querySelectorAll('.spme-btn-pause-ajout-annuler').forEach(function (btn) {
+      btn.onclick = function () { state.pauseAjoutConfirm = null; render(); };
+    });
+    root.querySelectorAll('.spme-btn-pause-retrait').forEach(function (btn) {
+      btn.onclick = function () { doPauseRetraitDemander(Number(btn.getAttribute('data-jour-id')), Number(btn.getAttribute('data-pause-id'))); };
+    });
+    root.querySelectorAll('.spme-btn-pause-retrait-confirmer').forEach(function (btn) {
+      btn.onclick = function () { doPauseRetraitConfirmer(Number(btn.getAttribute('data-jour-id')), Number(btn.getAttribute('data-pause-id'))); };
+    });
+    root.querySelectorAll('.spme-btn-pause-retrait-annuler').forEach(function (btn) {
+      btn.onclick = function () { state.pauseRetraitConfirm = null; render(); };
+    });
+    root.querySelectorAll('.spme-btn-amenagement-toggle').forEach(function (btn) {
+      btn.onclick = function () { doToggleAmenagement(Number(btn.getAttribute('data-jour-id'))); };
+    });
+    root.querySelectorAll('.spme-btn-amenagement-maj').forEach(function (btn) {
+      btn.onclick = function () { doAmenagementMettreAJour(Number(btn.getAttribute('data-jour-id'))); };
     });
   }
 
@@ -433,9 +561,14 @@
     state.annulationEnvoyee = null;
     state.annulationMotif = '';
     state.jourSupprConfirm = null;
+    state.pausesJourId = null; state.pausesListe = null; state.pauseAjoutConfirm = null; state.pauseRetraitConfirm = null;
+    state.amenagementJourId = null; state.amenagementApercu = null; state.amenagementMsg = null;
     state.erreur = null;
     render();
-    api(withToken('/client/reservations/' + encodeURIComponent(id))).then(function (data) {
+    // return (30/08, gestes 3 & 4) — permet à doPauseAjoutConfirmer/doAmenagementMettreAJour de
+    // ré-ouvrir le panneau du bon jour APRÈS le rechargement de la fiche (.then), sans changer le
+    // comportement des appelants existants qui ignoraient déjà la valeur de retour.
+    return api(withToken('/client/reservations/' + encodeURIComponent(id))).then(function (data) {
       state.detail = data;
       state.vue = 'detail';
       render();
@@ -504,6 +637,132 @@
       .then(function (r) {
         if (r.ok) { state.jourSupprConfirm = null; ouvrirDetail(id); return; }
         state.jourSupprConfirm = { jourId: jourId, error: r.message };
+        render();
+      });
+  }
+
+  // (30/08, gestes 3 & 4) — chaque fonction appelle UNIQUEMENT window.SresaEspaceClientCore, comme
+  // les gestes 1 & 2 ci-dessus : aucune règle de verrou recopiée, AUCUN montant affiché.
+
+  function doTogglePauses(jourId) {
+    if (!coreDisponible() || !state.detail) return;
+    var etaitOuvert = state.pausesJourId === jourId;
+    state.pausesJourId = null; state.pausesListe = null; state.pauseAjoutConfirm = null; state.pauseRetraitConfirm = null;
+    state.amenagementJourId = null; state.amenagementApercu = null; state.amenagementMsg = null;
+    if (etaitOuvert) { render(); return; }
+    state.pausesJourId = jourId;
+    render();
+    var promesses = [window.SresaEspaceClientCore.listerPausesJour(state.detail.id, jourId, { token: state.token, apiBase: apiBaseClient() })];
+    if (!state.formulesPause) promesses.push(window.SresaEspaceClientCore.formulesPause({ token: state.token, apiBase: apiBaseClient() }));
+    Promise.all(promesses).then(function (rs) {
+      var pausesR = rs[0];
+      if (rs[1] && rs[1].ok) state.formulesPause = rs[1].formules;
+      state.pausesListe = pausesR.ok ? pausesR.pauses : [];
+      render();
+    });
+  }
+
+  function doPauseAjoutDemander(jourId) {
+    if (!coreDisponible() || !state.detail) return;
+    var heureEl = root.querySelector('.spme-pause-heure[data-jour-id="' + jourId + '"]');
+    var effectifEl = root.querySelector('.spme-pause-effectif[data-jour-id="' + jourId + '"]');
+    var heurePause = heureEl ? heureEl.value : '';
+    var nombrePersonnes = effectifEl ? Number(effectifEl.value) : NaN;
+    if (!heurePause || !isFinite(nombrePersonnes) || nombrePersonnes < 1) {
+      state.pauseAjoutConfirm = { error: "Renseignez l'heure et le nombre de personnes." };
+      render();
+      return;
+    }
+    // Valeurs conservées le temps de l'aperçu (root.innerHTML est régénéré à chaque render()).
+    state._pauseAjoutValeurs = { jourId: jourId, heurePause: heurePause, nombrePersonnes: nombrePersonnes };
+    window.SresaEspaceClientCore.apercuAjoutPause(state.detail.id, jourId, { token: state.token, apiBase: apiBaseClient() })
+      .then(function (r) {
+        state.pauseAjoutConfirm = r.ok ? { confirmingAjout: true, message: r.message } : { error: r.message };
+        render();
+      });
+  }
+
+  function doPauseAjoutConfirmer(jourId) {
+    if (!coreDisponible() || !state.detail) return;
+    var formuleEl = root.querySelector('.spme-pause-formule[data-jour-id="' + jourId + '"]');
+    var v = state._pauseAjoutValeurs || {};
+    state.pauseAjoutConfirm = { ajoutEnCours: true };
+    render();
+    window.SresaEspaceClientCore.ajouterPause(state.detail.id, jourId, {
+      formuleId: formuleEl ? Number(formuleEl.value) : null, heurePause: v.heurePause, nombrePersonnes: v.nombrePersonnes,
+    }, { token: state.token, apiBase: apiBaseClient() }).then(function (r) {
+      if (r.ok) {
+        state.pauseAjoutConfirm = null;
+        var id = state.detail.id;
+        ouvrirDetail(id).then(function () { doTogglePauses(jourId); });
+        return;
+      }
+      state.pauseAjoutConfirm = { error: r.message };
+      render();
+    });
+  }
+
+  function doPauseRetraitDemander(jourId, pauseId) {
+    if (!coreDisponible() || !state.detail) return;
+    state.pauseRetraitConfirm = { pauseId: pauseId };
+    render();
+    window.SresaEspaceClientCore.apercuRetraitPause(state.detail.id, jourId, pauseId, { token: state.token, apiBase: apiBaseClient() })
+      .then(function (r) {
+        state.pauseRetraitConfirm = r.ok
+          ? { pauseId: pauseId, confirmingRetrait: true, message: r.message }
+          : { pauseId: pauseId, error: r.message };
+        render();
+      });
+  }
+
+  function doPauseRetraitConfirmer(jourId, pauseId) {
+    if (!coreDisponible() || !state.detail) return;
+    state.pauseRetraitConfirm = { pauseId: pauseId, retraitEnCours: true };
+    render();
+    window.SresaEspaceClientCore.retirerPause(state.detail.id, jourId, pauseId, { token: state.token, apiBase: apiBaseClient() })
+      .then(function (r) {
+        if (r.ok) {
+          state.pauseRetraitConfirm = null;
+          var id = state.detail.id;
+          ouvrirDetail(id).then(function () { doTogglePauses(jourId); });
+          return;
+        }
+        state.pauseRetraitConfirm = { pauseId: pauseId, error: r.message };
+        render();
+      });
+  }
+
+  function doToggleAmenagement(jourId) {
+    if (!coreDisponible() || !state.detail) return;
+    var etaitOuvert = state.amenagementJourId === jourId;
+    state.pausesJourId = null; state.pausesListe = null; state.pauseAjoutConfirm = null; state.pauseRetraitConfirm = null;
+    state.amenagementJourId = null; state.amenagementApercu = null; state.amenagementMsg = null;
+    if (etaitOuvert) { render(); return; }
+    state.amenagementJourId = jourId;
+    render();
+    var promesses = [window.SresaEspaceClientCore.apercuAmenagement(state.detail.id, jourId, { token: state.token, apiBase: apiBaseClient() })];
+    if (!state.amenagementCatalogue) promesses.push(window.SresaEspaceClientCore.amenagementsCatalogue({ token: state.token, apiBase: apiBaseClient() }));
+    Promise.all(promesses).then(function (rs) {
+      var apercuR = rs[0];
+      if (rs[1] && rs[1].ok) state.amenagementCatalogue = rs[1].amenagements;
+      if (apercuR.ok) { state.amenagementApercu = { mail4DejaEnvoye: apercuR.mail4DejaEnvoye }; }
+      else { state.amenagementMsg = apercuR.message; }
+      render();
+    });
+  }
+
+  function doAmenagementMettreAJour(jourId) {
+    if (!coreDisponible() || !state.detail) return;
+    var select = root.querySelector('.spme-amenagement-select[data-jour-id="' + jourId + '"]');
+    var amenagementId = select && select.value ? Number(select.value) : null;
+    window.SresaEspaceClientCore.definirAmenagement(state.detail.id, jourId, { amenagementId: amenagementId }, { token: state.token, apiBase: apiBaseClient() })
+      .then(function (r) {
+        if (r.ok) {
+          var id = state.detail.id;
+          ouvrirDetail(id).then(function () { doToggleAmenagement(jourId); });
+          return;
+        }
+        state.amenagementMsg = r.message;
         render();
       });
   }
