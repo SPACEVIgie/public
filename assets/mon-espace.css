@@ -96,3 +96,14 @@
   font-size: 13.5px; font-family: inherit; margin-bottom: 10px; resize: vertical;
 }
 .spme-motif:focus { outline: none; border-color: var(--spme-bordeaux); }
+
+/* 30/08, module partagé (window.SresaEspaceClientCore) — gestes "Modifier l'effectif" /
+   "Supprimer un jour", même famille visuelle que .spme-jour-row/.spme-annuler-box ci-dessus. */
+.spme-jour-gestes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 0 10px; }
+.spme-effectif-input {
+  width: 4.5em; padding: 8px 10px; border: 1px solid var(--spme-border); border-radius: 9px;
+  font-size: 13.5px; font-family: inherit; color: var(--spme-text);
+}
+.spme-effectif-input:focus { outline: none; border-color: var(--spme-bordeaux); }
+.spme-btn.spme-btn-danger { border-color: var(--spme-alert); color: var(--spme-alert); }
+.spme-btn.spme-btn-danger:hover { background: var(--spme-alert-bg); border-color: var(--spme-alert); }

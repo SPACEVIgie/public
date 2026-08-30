@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.7.5
+Stable tag: 1.8.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -14,7 +14,8 @@ Tunnel de réservation en ligne pour S-PACE Business Center.
 Ajoute le shortcode `[space_reservation]` : une salle de réunion ou un bureau peut être
 réservé en ligne (recherche de disponibilité, options, devis ou paiement selon le profil
 du client). Ajoute aussi `[space_mon_espace]` : l'espace client complet, sur le site
-(email → lien reçu → liste des réservations → détail → demande d'annulation). Ajoute enfin
+(email → lien reçu → liste des réservations → détail → demande d'annulation, modification
+de l'effectif et suppression d'un jour). Ajoute enfin
 `[space_disponibilite]` : sur la page d'une salle, la prochaine date libre pour une durée
 choisie. Le plugin ne stocke aucune donnée — tout transite directement, depuis le
 navigateur du visiteur, vers l'API S-RESA.
@@ -51,6 +52,21 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.8.0 =
+* [space_mon_espace] deux nouveaux gestes libre-service, jour par jour, jusqu'ici réservés à
+  l'espace client S-RESA historique (autre domaine) : « Modifier l'effectif » et « Supprimer un
+  jour » (fenêtre, tarif figé à la main, palier de remboursement — toutes les règles restent
+  arbitrées côté serveur, jamais devinées ici). Ligne « Participants » ajoutée au détail d'une
+  réservation, et le paiement affiché tient désormais compte du mode de règlement (facture, crédit
+  salle, gratuit) plutôt que du seul statut technique — une réservation réglée sur facture
+  n'affiche plus « En attente » à tort.
+* Changement structurel : `[space_mon_espace]` charge désormais un module JS partagé avec l'espace
+  client S-RESA historique (même fichier, servi par S-PACE) — c'est lui qui porte ces deux gestes,
+  pour que ce plugin n'ait plus à les recopier à chaque évolution (cf. la régression corrigée en
+  1.7.5, causée par une telle recopie manquée). URL réglable dans Réglages > S-PACE Réservation. Si
+  ce module est indisponible, `[space_mon_espace]` continue de fonctionner normalement (liste,
+  détail, annulation) — seuls ces deux gestes sont alors temporairement masqués.
 
 = 1.7.5 =
 * [space_mon_espace] correctif régression du 29/08 : la liste « Mes réservations » n'affichait

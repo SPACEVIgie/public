@@ -2,7 +2,7 @@
 /**
  * Plugin Name: S-PACE Réservation
  * Description: Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation]. Shortcode [space_mon_espace] : espace client complet, sur le site (email → lien → réservations), avec bouton « Nouvelle réservation » vers le tunnel. Shortcode [space_disponibilite] : prochaine date libre d'une salle. Page de réglages : liste des salles réservables avec shortcode prêt à copier. Consomme l'API S-RESA (bloc 9 de la spec).
- * Version: 1.7.5
+ * Version: 1.8.0
  * Author: S-PACE Business Center
  * Text Domain: space-reservation
  * Update URI: https://github.com/SPACEVIgie/public
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SPACE_RESERVATION_VERSION', '1.7.5');
+define('SPACE_RESERVATION_VERSION', '1.8.0');
 // Espace client S-RESA HISTORIQUE (portail Vigie, autre domaine) — repli UNIQUEMENT : n'est plus
 // utilisé quand SPACE_RESERVATION_OPTION_ESPACE_CLIENT_URL (réglage ci-dessous) est renseigné.
 // Conservé pour ne rien casser tant qu'Olivier n'a pas créé la page « Mon espace » du site.
@@ -37,6 +37,15 @@ define('SPACE_RESERVATION_OPTION_MAGIC_RETURN_URL', 'space_reservation_magic_ret
 // affiché dans [space_mon_espace]. Vide → le bouton ne s'affiche PAS (pas de destination devinée :
 // une URL fausse enverrait le client sur une page 404, un bouton absent ne casse rien).
 define('SPACE_RESERVATION_OPTION_RESERVATION_URL', 'space_reservation_reservation_url');
+// (30/08, 1.8.0) Module partagé — [space_mon_espace] charge désormais AUSSI ce script externe,
+// AVANT assets/mon-espace.js (dépendance wp_enqueue_script, cf. space_mon_espace_enqueue_assets
+// ci-dessous). C'est le MÊME fichier que la page autonome S-RESA (portail.s-pace.fr/sresa/
+// espace-client.js) : il porte window.SresaEspaceClientCore (gestes « Modifier l'effectif »/
+// « Supprimer un jour » + vocabulaire traduit), pour que mon-espace.js n'ait plus à les recopier
+// (cf. incident du 29/08 : un renommage de champs suivi côté serveur, jamais dans le plugin).
+// Réglable comme les autres URL du plugin (même patron) au cas où le domaine du portail change.
+define('SPACE_RESERVATION_OPTION_ESPACE_CLIENT_CORE_URL', 'space_reservation_espace_client_core_url');
+define('SPACE_RESERVATION_DEFAULT_ESPACE_CLIENT_CORE_URL', 'https://portail.s-pace.fr/sresa/espace-client.js');
 
 /**
  * Mises à jour automatiques depuis les Releases du dépôt public GitHub SPACEVIgie/public.
@@ -76,6 +85,11 @@ function space_reservation_register_settings() {
         'type' => 'string',
         'sanitize_callback' => 'esc_url_raw',
         'default' => '',
+    ]);
+    register_setting('space_reservation', SPACE_RESERVATION_OPTION_ESPACE_CLIENT_CORE_URL, [
+        'type' => 'string',
+        'sanitize_callback' => 'esc_url_raw',
+        'default' => SPACE_RESERVATION_DEFAULT_ESPACE_CLIENT_CORE_URL,
     ]);
 }
 add_action('admin_init', 'space_reservation_register_settings');
@@ -133,7 +147,7 @@ function space_reservation_liste_shortcodes() {
         ],
         [
             'shortcode' => '[space_mon_espace]',
-            'role' => "L'espace client complet, sur le site : email → lien reçu → liste des réservations → détail → demande d'annulation, avec un bouton « Nouvelle réservation » (si l'URL de la page de réservation est renseignée ci-dessous). À placer sur une page dédiée (ex. « Mon espace »).",
+            'role' => "L'espace client complet, sur le site : email → lien reçu → liste des réservations → détail → demande d'annulation, modification de l'effectif et suppression d'un jour, avec un bouton « Nouvelle réservation » (si l'URL de la page de réservation est renseignée ci-dessous). À placer sur une page dédiée (ex. « Mon espace »).",
         ],
         [
             'shortcode' => '[space_disponibilite salle="CODE" tunnel="https://…/reserver/"]',
@@ -208,6 +222,19 @@ function space_reservation_render_settings_page() {
                         toujours identifié (pas besoin de redonner son email). <strong>Si ce champ est vide, le bouton ne
                         s'affiche pas</strong> (plutôt qu'une destination devinée, potentiellement fausse). Renseignez-le dès
                         que la page « Réserver » du site existe.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="space_reservation_espace_client_core_url">URL du module partagé « espace client »</label></th>
+                    <td>
+                        <input type="url" id="space_reservation_espace_client_core_url" name="<?php echo esc_attr(SPACE_RESERVATION_OPTION_ESPACE_CLIENT_CORE_URL); ?>"
+                               value="<?php echo esc_attr(get_option(SPACE_RESERVATION_OPTION_ESPACE_CLIENT_CORE_URL, SPACE_RESERVATION_DEFAULT_ESPACE_CLIENT_CORE_URL)); ?>"
+                               class="regular-text" placeholder="<?php echo esc_attr(SPACE_RESERVATION_DEFAULT_ESPACE_CLIENT_CORE_URL); ?>">
+                        <p class="description">Script chargé <strong>avant</strong> <code>[space_mon_espace]</code> — il porte les gestes
+                        « Modifier l'effectif »/« Supprimer un jour » et le vocabulaire des statuts, partagés avec l'espace client
+                        S-RESA historique (même fichier). Ne rien changer sauf indication de S-PACE. Si ce script est indisponible,
+                        <code>[space_mon_espace]</code> continue de fonctionner (liste, détail, annulation) — seuls ces deux gestes
+                        sont alors masqués.</p>
                     </td>
                 </tr>
             </table>
@@ -339,6 +366,11 @@ add_shortcode('space_reservation', 'space_reservation_shortcode');
  * l'API S-RESA (routes/espaceClient.js : demander-lien, moi, reservations, reservations/:id,
  * reservations/:id/annuler) — les MÊMES routes que l'ancien espace client Vigie, aucune dupliquée.
  *
+ * (30/08, 1.8.0) Deux gestes libre-service par jour de réservation, jusqu'ici réservés à l'espace
+ * client S-RESA historique : « Modifier l'effectif » et « Supprimer un jour » (fenêtre/tarif/palier
+ * arbitrés côté serveur, jamais devinés ici). Consommés via le module partagé chargé en dépendance
+ * (cf. space_mon_espace_enqueue_assets ci-dessous) — AUCUNE logique de verrou recopiée.
+ *
  * (avant 1.5.0, historique) la version 1.4.0 n'affichait qu'une carte pointant vers l'espace client
  * S-RESA (portail.s-pace.fr, autre domaine) : le client quittait le site pour retrouver ses résas.
  * Le cookie space_client de cet espace est host-only et ne traverse pas jusqu'ici — impossible d'y
@@ -360,10 +392,27 @@ function space_mon_espace_enqueue_assets() {
         [],
         SPACE_RESERVATION_VERSION
     );
+    // (30/08, 1.8.0) Module partagé : chargé en DÉPENDANCE de space-mon-espace — WordPress
+    // garantit l'ORDRE (ce script avant mon-espace.js), pas le succès du fetch réseau externe (le
+    // portail peut être indisponible) : mon-espace.js teste window.SresaEspaceClientCore à
+    // l'usage, jamais une seule fois au chargement (dégradation propre, cf. commentaire en tête de
+    // assets/mon-espace.js). Pas de wp_localize_script ici : ce script ne prend aucune config, il
+    // est identique quel que soit l'appelant (page autonome ou plugin).
+    $espaceClientCoreUrl = trim((string) get_option(SPACE_RESERVATION_OPTION_ESPACE_CLIENT_CORE_URL, ''));
+    if ($espaceClientCoreUrl === '') {
+        $espaceClientCoreUrl = SPACE_RESERVATION_DEFAULT_ESPACE_CLIENT_CORE_URL;
+    }
+    wp_enqueue_script(
+        'space-espace-client-core',
+        $espaceClientCoreUrl,
+        [],
+        SPACE_RESERVATION_VERSION,
+        true
+    );
     wp_enqueue_script(
         'space-mon-espace',
         plugins_url('assets/mon-espace.js', __FILE__),
-        [],
+        ['space-espace-client-core'],
         SPACE_RESERVATION_VERSION,
         true
     );
