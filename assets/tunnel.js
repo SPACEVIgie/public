@@ -405,6 +405,13 @@
     return d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear();
   }
 
+  // (31/08, ergonomie tunnel §4) — libellé lisible d'un type d'espace (espaces.type_reservation),
+  // pour le message de repli. Un seul point de traduction plutôt que des chaînes en dur répétées.
+  function libelleTypeEspace(type, pluriel) {
+    if (type === 'bureau') return pluriel ? 'bureaux' : 'bureau';
+    return pluriel ? 'salles de réunion' : 'salle de réunion';
+  }
+
   // ===================== RENDU =====================
   function render() {
     // L'étape « paiement Stripe » (7) réutilise le point d'étape « Paiement » (4) dans le fil.
@@ -448,6 +455,36 @@
     return '<div class="spr-step-dot ' + cls + '" title="' + esc(label) + '">' + (cur > n ? '✓' : n) + '</div>';
   }
 
+  // Lien vers l'espace client AVEC LE TOKEN qui a identifié ce client (31/08, ergonomie tunnel §6
+  // — signalé deux fois par Olivier, le lien « Gérer mes réservations » ne survivait pas au
+  // changement d'étape). ESPACE_CLIENT_URL pointe soit la page moderne portant [space_mon_espace]
+  // (réglage « URL de l'espace client », lit ?space_token= — même convention que ce tunnel, cf.
+  // assets/mon-espace.js), soit, à défaut de réglage, l'ancien espace client direct dont le token
+  // est un SEGMENT DE CHEMIN (assets/mon-espace.js absent de cette cible ; espace-client.js
+  // historique, getTokenFromUrl) — pas une query string. On distingue les deux par la FORME de
+  // l'URL plutôt que d'inventer un 3ᵉ format qui casserait l'une des deux cibles.
+  function urlEspaceClientAvecToken() {
+    if (!state.token) return ESPACE_CLIENT_URL;
+    if (/\/espace-client\/?$/.test(ESPACE_CLIENT_URL)) {
+      return ESPACE_CLIENT_URL.replace(/\/$/, '') + '/' + encodeURIComponent(state.token);
+    }
+    var sep = ESPACE_CLIENT_URL.indexOf('?') >= 0 ? '&' : '?';
+    return ESPACE_CLIENT_URL + sep + 'space_token=' + encodeURIComponent(state.token);
+  }
+
+  // Badge « ✓ Connecté », REUTILISÉ par renderIdentifyPrompt() (étapes 1, 2, 3) ET par
+  // renderStepPaiement() (étape 4, qui composait jusqu'ici le même badge séparément — cf. §6) :
+  // un seul point de rendu pour que le lien « Gérer mes réservations » n'oublie jamais une étape.
+  function renderConnectedChip() {
+    return h(['<div class="spr-identified-chip">✓ Connecté',
+      state.identiteInfo && state.identiteInfo.raison_sociale ? (' — ' + esc(state.identiteInfo.raison_sociale)) : '',
+      // (31/08, §6) — le lien n'a de sens qu'avec un token en poche (state.token) : un client
+      // identifié via le cookie space_client seul (portail S-CLIENT) n'en a pas ici, cf. §
+      // urlEspaceClientAvecToken ci-dessus — pas de lien plutôt qu'un lien qui perdrait le token.
+      state.token ? h([' <a class="spr-manage-link" href="', esc(urlEspaceClientAvecToken()), '" target="_blank" rel="noopener">Gérer mes réservations</a>']) : '',
+      '</div>']);
+  }
+
   // Proposition d'identification, RÉUTILISÉE à plusieurs endroits du tunnel (correctif 29/08 —
   // « proposer dès le début » plutôt que la limiter à l'étape Paiement). Un seul point de rendu
   // et un seul point de câblage (bindEvents ci-dessous) pour ne jamais faire diverger le texte ou
@@ -459,10 +496,14 @@
       // ICI, juste sous le badge, des l'etape 1 : jusqu'ici elle n'apparaissait qu'au recap/paiement,
       // laissant croire pendant tout le parcours que rien n'etait applique. §25 : une remise n'est
       // pas une action -> note discrete (renderAnnonceRemise, deja stylee --spr-note), pas un badge.
-      return h(['<div class="spr-identified-chip">✓ Connecté', state.identiteInfo && state.identiteInfo.raison_sociale ? (' — ' + esc(state.identiteInfo.raison_sociale)) : '', '</div>', renderAnnonceRemise()]);
+      return h([renderConnectedChip(), renderAnnonceRemise()]);
     }
     return h(['<div class="spr-identify-box spr-identify-compact">',
-      '<div class="spr-identify-title">Déjà locataire S-PACE ?</div>',
+      // (31/08, ergonomie tunnel §1) — même formulation que le lien « Déjà client ? Retrouvez vos
+      // réservations » (dejaClientHtml, renderStepRecherche) : une seule façon de poser la
+      // question dans tout le tunnel, plutôt que « Déjà locataire S-PACE ? » ici et « Vous êtes
+      // déjà locataire S-PACE ? » à l'étape Paiement (renderStepPaiement, ci-dessous).
+      '<div class="spr-identify-title">Déjà client ?</div>',
       '<div class="spr-identify-sub">Identifiez-vous pour voir vos tarifs dédiés — facultatif, vous pouvez continuer sans.</div>',
       '<div class="spr-identify-row"><input type="email" id="spr-identify-email" placeholder="votre@email.fr">',
       '<button class="spr-btn" id="spr-btn-identify">Recevoir mon lien</button></div>',
@@ -497,7 +538,14 @@
     // différent plus tard dans le parcours — cf. renderIdentifyPrompt(). Reste FACULTATIF (§ note
     // de cadrage) : un prospect qui ne se connecte pas ne voit rien de bloquant, juste ce lien
     // discret en plus de celui qui mène à l'espace client (dejaClientHtml, ci-dessus).
-    return dejaClientHtml + renderIdentifyPrompt() + h(['<div class="spr-card">',
+    // (31/08, ergonomie tunnel §2) — annonce SANS CHIFFRER, à l'étape où aucun prix n'est encore
+    // affiché (contrairement à « Remise fidélité 15 % appliquée », qui n'a de sens qu'à partir de
+    // l'étape 2 une fois un prix affiché — cf. renderAnnonceRemise). Couvre les trois cas (remise
+    // fidélité, tarif dédié, ou aucun) sans en présumer un : jamais une promesse chiffrée qui
+    // pourrait ne pas se réaliser. §25 : une remise n'est pas une action -> note discrète.
+    var noteRemisesHtml = h(['<div class="spr-note-remises">Les prix intègrent les éventuelles remises auxquelles vous avez droit.</div>']);
+
+    return dejaClientHtml + renderIdentifyPrompt() + noteRemisesHtml + h(['<div class="spr-card">',
       '<div class="spr-title">Réserver un espace</div>',
       '<div class="spr-subtitle">Recherchez la disponibilité d\'une salle ou d\'un bureau S-PACE.</div>',
       '<div class="spr-grid-2">',
@@ -530,13 +578,29 @@
     // ne verrait jamais la proposition avant l'étape Paiement.
     var identifyBanner = renderIdentifyPrompt();
     if (!d || !d.espaces.length) {
+      // (31/08, ergonomie tunnel §3) — DEUX issues, pas une : jusqu'ici le texte ne parlait que de
+      // la liste d'attente alors que « Modifier la recherche » (une autre date, un autre effectif)
+      // existait déjà en bouton — un client pouvait croire qu'il n'avait pas le choix. Le bouton
+      // est aussi REMONTÉ au-dessus de la liste d'attente : « un client veut d'abord essayer autre
+      // chose » (Olivier) — reste un .spr-btn discret (pas .spr-primary), ce n'est qu'un ORDRE.
       return identifyBanner + h(['<div class="spr-card">',
         '<div class="spr-title">Aucune disponibilité</div>',
-        '<div class="spr-subtitle">Aucun espace n\'est libre pour ces critères. Laissez-nous vos coordonnées et nous vous recontacterons dès qu\'un créneau se libère.</div>',
+        '<div class="spr-subtitle">Aucun espace n\'est libre pour ces critères. Essayez une autre date, ou laissez-nous vos coordonnées.</div>',
+        '<div class="spr-actions spr-end"><button class="spr-btn" id="spr-btn-retour1">← Modifier la recherche</button></div>',
         renderListeAttenteBox(),
-        '<div class="spr-actions"><button class="spr-btn" id="spr-btn-retour1">← Modifier la recherche</button></div>',
         '</div>']);
     }
+
+    // (31/08, ergonomie tunnel §4) — Repli vers l'autre type d'espace (GET /tunnel/disponibilite,
+    // type_repli) : SEULEMENT annoncé quand le serveur l'a réellement utilisé (aucun bureau/salle
+    // n'a jamais été cherché « au cas où » — §4 hors périmètre, jamais systématique). Le message
+    // nomme le type DEMANDÉ (state.search.typeReservation, ce qu'Olivier a tapé) et le type
+    // RÉELLEMENT PROPOSÉ (d.type_repli) — jamais un « Aucune disponibilité » vrai mais inutile qui
+    // laisserait partir un client sur une liste d'attente pour un créneau qui n'existera jamais.
+    var repliBanner = d.type_repli
+      ? h(['<div class="spr-banner spr-info">Aucun ', libelleTypeEspace(state.search.typeReservation, false),
+        ' ne convient, mais ces ', libelleTypeEspace(d.type_repli, true), ' sont libres.</div>'])
+      : '';
     var roomsHtml = d.espaces.map(function (e) {
       var sel = state.selectedEspaceId === e.id;
       // §17.11 — lien « Voir la salle » (nouvel onglet), affiché seulement si la fiche est
@@ -585,6 +649,7 @@
     return identifyBanner + h(['<div class="spr-card">',
       '<div class="spr-title">Choisissez votre espace</div>',
       '<div class="spr-subtitle">', formatDateFr(state.search.date), ' — chaque salle est affichée à son tarif.</div>',
+      repliBanner,
       roomsHtml,
       recapSel,
       '<div class="spr-actions">',
@@ -809,10 +874,13 @@
   function renderStepPaiement() {
     var identifBlock;
     if (state.identifie) {
-      identifBlock = h(['<div class="spr-identified-chip">✓ Connecté', state.identiteInfo && state.identiteInfo.raison_sociale ? (' — ' + esc(state.identiteInfo.raison_sociale)) : '', '</div>']);
+      // (31/08, §6) — même badge que renderIdentifyPrompt() (étapes 1-3), désormais partagé via
+      // renderConnectedChip() : le lien « Gérer mes réservations » ne doit manquer nulle part.
+      identifBlock = renderConnectedChip();
     } else {
       identifBlock = h(['<div class="spr-identify-box">',
-        '<div class="spr-identify-title">Vous êtes déjà locataire S-PACE ?</div>',
+        // (31/08, §1) — même titre que renderIdentifyPrompt() : une seule formulation.
+        '<div class="spr-identify-title">Déjà client ?</div>',
         '<div class="spr-identify-sub">Identifiez-vous pour accéder à votre crédit salle ou à la facturation fin de mois.</div>',
         '<div class="spr-identify-row"><input type="email" id="spr-identify-email" placeholder="votre@email.fr">',
         '<button class="spr-btn" id="spr-btn-identify">Recevoir mon lien</button></div>',
@@ -933,16 +1001,24 @@
   // demande à l'équipe (commentaire_general, lu par notificationEquipeTunnel.js).
   function renderHorairesAnticipes() {
     var ha = state.horaireAnticipe;
-    return h(['<div class="spr-field">',
-      '<label>Besoin d\'un horaire particulier ?</label>',
-      '<label class="spr-payment-option" style="display:flex;align-items:center;gap:8px;font-weight:normal;">',
-      '<input type="checkbox" id="spr-ha-avant"', ha.avant ? ' checked' : '', '> ',
-      "J'ai besoin d'arriver avant l'ouverture",
+    // (31/08, ergonomie tunnel §5) — jusqu'ici imbriquées dans un <div class="spr-field"> : le
+    // sélecteur CSS `.spr-field input` (pensé pour les text/select/textarea, largeur 100%, cadre
+    // épais) s'appliquait AUSSI à ces cases à cocher, qui héritaient donc d'un cadre pleine largeur
+    // séparant visuellement la case du libellé — cause réelle du rendu signalé par Olivier, pas
+    // un simple choix de style. Ce sont des CASES, pas des choix majeurs (Olivier) : plus de cadre
+    // .spr-payment-option ici, motif .spr-checkbox-line dédié (case + libellé sur une ligne, sans
+    // bordure). Le titre n'est plus un <label> de .spr-field (uppercase, cf. tunnel.css) : un
+    // simple intitulé de section, comme les autres titres du tunnel (jamais en capitales).
+    return h(['<div class="spr-horaires-anticipes">',
+      '<div class="spr-horaires-anticipes-title">Besoin d\'un horaire particulier ?</div>',
+      '<label class="spr-checkbox-line">',
+      '<input type="checkbox" id="spr-ha-avant"', ha.avant ? ' checked' : '', '>',
+      "<span>J'ai besoin d'arriver avant l'ouverture</span>",
       '</label>',
       ha.avant ? h(['<div class="spr-field"><label>Heure d\'arrivée souhaitée (facultatif)</label><input type="time" id="spr-ha-avant-heure" value="', esc(ha.avantHeure), '"></div>']) : '',
-      '<label class="spr-payment-option" style="display:flex;align-items:center;gap:8px;font-weight:normal;">',
-      '<input type="checkbox" id="spr-ha-apres"', ha.apres ? ' checked' : '', '> ',
-      'Je dois partir après la fermeture',
+      '<label class="spr-checkbox-line">',
+      '<input type="checkbox" id="spr-ha-apres"', ha.apres ? ' checked' : '', '>',
+      '<span>Je dois partir après la fermeture</span>',
       '</label>',
       ha.apres ? h(['<div class="spr-field"><label>Heure de départ souhaitée (facultatif)</label><input type="time" id="spr-ha-apres-heure" value="', esc(ha.apresHeure), '"></div>']) : '',
       (ha.avant || ha.apres) ? h(['<div class="spr-hint">Ceci est une demande, pas une confirmation — nous reviendrons vers vous.</div>']) : '',
@@ -1066,7 +1142,9 @@
     var modeLabels = { devis: 'Demande de devis', en_ligne: 'Paiement en ligne par carte', credit_salle: 'Crédit salle', sur_facture: 'Facture fin de mois' };
     var enLigne = state.modePaiement === 'en_ligne';
 
-    return h(['<div class="spr-card">',
+    // (31/08, §6) — le badge (et « Gérer mes réservations ») suit désormais le client à TOUTES
+    // les étapes, pas seulement 1 à 4.
+    return (state.identifie ? renderConnectedChip() : '') + h(['<div class="spr-card">',
       '<div class="spr-title">Récapitulatif</div>',
       '<div class="spr-recap-line"><span>Espace</span><span>', esc(espace ? espace.nom : ''), espace && espace.surclasse ? ' (plus grande)' : '', '</span></div>',
       '<div class="spr-recap-line"><span>Date</span><span>', formatDateFr(state.search.date), '</span></div>',
@@ -1092,8 +1170,10 @@
     // §17.14 — prise en compte : un conflit d'agenda a été détecté à la confirmation. On ne montre
     // JAMAIS un refus sec (le client a rempli tout son parcours) : on affiche le message de prise en
     // compte renvoyé par le serveur, l'équipe revient vers lui.
+    // (31/08, §6) — badge/lien à toutes les étapes, y compris la confirmation finale.
+    var chip = state.identifie ? renderConnectedChip() : '';
     if (state.aRevoir) {
-      return h(['<div class="spr-card spr-confirm-box">',
+      return chip + h(['<div class="spr-card spr-confirm-box">',
         '<div class="spr-confirm-icon">⏳</div>',
         '<div class="spr-title">Demande prise en compte</div>',
         '<div class="spr-subtitle">', esc(state.messageClient || 'Votre demande a bien été prise en compte. Notre équipe revient vers vous très vite pour la confirmer.'),
@@ -1102,7 +1182,7 @@
         '</div>']);
     }
     var paye = r && r.reservation && (r.reservation.statut_paiement === 'paye' || state.modePaiement === 'en_ligne');
-    return h(['<div class="spr-card spr-confirm-box">',
+    return chip + h(['<div class="spr-card spr-confirm-box">',
       '<div class="spr-confirm-icon">✓</div>',
       '<div class="spr-title">', paye ? 'Paiement confirmé' : 'Demande envoyée', '</div>',
       '<div class="spr-subtitle">Référence : ', esc(r && r.reservation ? r.reservation.numero_devis : ''), '. ',
@@ -1121,7 +1201,8 @@
     // §4 « à l'écran de PAIEMENT, le TTC reste dominant, le HT en information » — c'est le montant
     // réellement débité par la carte que le client doit lire en premier.
     var montantHt = fmtMontantTotalHt();
-    return h(['<div class="spr-card">',
+    // (31/08, §6) — badge/lien à toutes les étapes, y compris le paiement Stripe.
+    return (state.identifie ? renderConnectedChip() : '') + h(['<div class="spr-card">',
       '<div class="spr-title">Paiement sécurisé</div>',
       '<div class="spr-subtitle">', montantTtc ? ('Montant à régler : ' + montantTtc + '.') : '',
       montantHt ? h([' <span class="spr-montant-ht-info">(dont ', montantHt, ')</span>']) : '',

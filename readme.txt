@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.3
+Stable tag: 1.9.4
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,19 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.4 =
+* [space_reservation] Six points d'ergonomie releves lors du test complet d'Olivier du 31/08 :
+  bandeau "Deja client ?" (une seule formulation, au lieu de "Deja locataire S-PACE ?"/"Vous
+  etes deja locataire S-PACE ?") ; note "Les prix integrent les eventuelles remises auxquelles
+  vous avez droit." sous le badge a l'etape 1 ; ecran "Aucune disponibilite" reformule (deux
+  issues -- une autre date, ou la liste d'attente -- "Modifier la recherche" remonte en
+  premier) ; repli automatique vers l'AUTRE type d'espace (bureau ou salle de reunion)
+  quand aucun espace du type demande ne convient, annonce au client ("Aucun bureau ne
+  convient, mais ces salles de reunion sont libres.") ; horaires particuliers restyles (cases
+  a cocher sur une ligne, sans cadre, titre non capitalise -- l'imbrication dans .spr-field
+  appliquait par accident le style des champs texte aux cases) ; lien "Gerer mes reservations"
+  desormais a TOUTES les etapes du tunnel des qu'un client est identifie, avec son token.
 
 = 1.9.3 =
 * [space_reservation] Identite resolue des l'arrivee sur le tunnel quand un lien de

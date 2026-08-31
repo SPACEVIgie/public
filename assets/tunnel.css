@@ -204,9 +204,27 @@
 .spr-identify-row { display: flex; gap: 8px; }
 .spr-identify-row input { flex: 1; }
 .spr-identified-chip {
-  display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 100px;
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 14px; border-radius: 100px;
   background: var(--spr-ok-bg); color: var(--spr-ok); font-weight: 600; font-size: 13px; margin-bottom: 16px;
 }
+/* Lien « Gérer mes réservations » (31/08, §6) — dans le badge de connexion, à toutes les étapes,
+   avec le token (cf. urlEspaceClientAvecToken, tunnel.js). Discret : ce n'est pas ce que le badge
+   annonce en premier (l'identification), juste un accès de plus. */
+.spr-identified-chip .spr-manage-link { color: var(--spr-ok); font-weight: 600; text-decoration: underline; }
+.spr-identified-chip .spr-manage-link:hover { text-decoration: none; }
+
+/* Note « les prix intègrent les remises » (31/08, §2) — étape 1, sous le badge/bandeau de
+   connexion. Même famille que .spr-annonce-remise (§25 : une remise n'est pas une action). */
+.spr-note-remises { font-size: 12.5px; color: var(--spr-note); margin: -6px 0 18px; }
+
+/* Horaires particuliers (31/08, §5) — remplace l'imbrication dans .spr-field (qui appliquait par
+   accident le style des champs texte aux cases à cocher, cf. tunnel.js::renderHorairesAnticipes).
+   Un titre de section normal (pas .spr-field label, donc pas de majuscules) + des cases sur une
+   ligne chacune, sans cadre : « ce sont des cases, pas des choix majeurs » (Olivier). */
+.spr-horaires-anticipes { margin-bottom: 16px; }
+.spr-horaires-anticipes-title { font-size: 14px; font-weight: 700; color: var(--spr-text); margin-bottom: 8px; }
+.spr-checkbox-line { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; font-weight: 400; cursor: pointer; }
+.spr-checkbox-line input { margin: 0; flex-shrink: 0; }
 
 .spr-recap-line { display: flex; justify-content: space-between; padding: 8px 0; font-size: 13.5px; border-bottom: 1px solid var(--spr-border-soft); }
 .spr-recap-line:last-child { border-bottom: none; }
