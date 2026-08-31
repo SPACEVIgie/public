@@ -496,7 +496,16 @@
       // ICI, juste sous le badge, des l'etape 1 : jusqu'ici elle n'apparaissait qu'au recap/paiement,
       // laissant croire pendant tout le parcours que rien n'etait applique. §25 : une remise n'est
       // pas une action -> note discrete (renderAnnonceRemise, deja stylee --spr-note), pas un badge.
-      return h([renderConnectedChip(), renderAnnonceRemise()]);
+      // (31/08, correctif reliquats v1.9.4 §1) — noteRemisesHtml VIT ICI, dans la branche identifie,
+      // et non plus en dehors de renderIdentifyPrompt() : posée inconditionnellement (bug constaté à
+      // l'écran par Olivier le 31/08), elle s'affichait même NON CONNECTÉ, juste sous le bandeau
+      // « Déjà client ? » — contredisant « Identifiez-vous pour voir vos tarifs dédiés » juste
+      // au-dessus, et promettant une remise à un prospect qui n'y a droit à rien. Elle ACCOMPAGNE le
+      // badge (sous lui), elle ne remplace jamais le bandeau non-connecté. Libellé inchangé
+      // (« éventuelles » confirmé par Olivier — remise fidélité, tarif négocié, ou rien).
+      return h([renderConnectedChip(),
+        '<div class="spr-note-remises">Les prix intègrent les éventuelles remises auxquelles vous avez droit.</div>',
+        renderAnnonceRemise()]);
     }
     return h(['<div class="spr-identify-box spr-identify-compact">',
       // (31/08, ergonomie tunnel §1) — même formulation que le lien « Déjà client ? Retrouvez vos
@@ -538,14 +547,12 @@
     // différent plus tard dans le parcours — cf. renderIdentifyPrompt(). Reste FACULTATIF (§ note
     // de cadrage) : un prospect qui ne se connecte pas ne voit rien de bloquant, juste ce lien
     // discret en plus de celui qui mène à l'espace client (dejaClientHtml, ci-dessus).
-    // (31/08, ergonomie tunnel §2) — annonce SANS CHIFFRER, à l'étape où aucun prix n'est encore
-    // affiché (contrairement à « Remise fidélité 15 % appliquée », qui n'a de sens qu'à partir de
-    // l'étape 2 une fois un prix affiché — cf. renderAnnonceRemise). Couvre les trois cas (remise
-    // fidélité, tarif dédié, ou aucun) sans en présumer un : jamais une promesse chiffrée qui
-    // pourrait ne pas se réaliser. §25 : une remise n'est pas une action -> note discrète.
-    var noteRemisesHtml = h(['<div class="spr-note-remises">Les prix intègrent les éventuelles remises auxquelles vous avez droit.</div>']);
+    // (31/08, ergonomie tunnel §2 — puis correctif reliquats v1.9.4 §1) — la note « éventuelles
+    // remises », SANS CHIFFRER, vit désormais DANS renderIdentifyPrompt() (branche identifie),
+    // conditionnée comme le badge : elle n'a rien à dire à un prospect non connecté. Voir le
+    // commentaire dans renderIdentifyPrompt() ci-dessus pour le détail du bug corrigé.
 
-    return dejaClientHtml + renderIdentifyPrompt() + noteRemisesHtml + h(['<div class="spr-card">',
+    return dejaClientHtml + renderIdentifyPrompt() + h(['<div class="spr-card">',
       '<div class="spr-title">Réserver un espace</div>',
       '<div class="spr-subtitle">Recherchez la disponibilité d\'une salle ou d\'un bureau S-PACE.</div>',
       '<div class="spr-grid-2">',

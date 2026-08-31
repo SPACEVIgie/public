@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.4
+Stable tag: 1.9.5
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,17 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.5 =
+* [space_reservation] Correctif : la note "Les prix integrent les eventuelles remises auxquelles
+  vous avez droit." (v1.9.4) s'affichait pour TOUT visiteur, y compris NON connecte, sous le
+  bandeau "Deja client ?" -- contredisant l'invitation a s'identifier. Deplacee DANS
+  renderIdentifyPrompt(), conditionnee comme le badge (state.identifie) : elle n'apparait plus
+  qu'une fois connecte, juste sous le badge "Connecte", jamais a la place du bandeau non connecte.
+  Verifie sur le bundle Autoptimize reellement servi (s-pace.fr), pas seulement le depot : les
+  cinq autres points d'ergonomie de la v1.9.4 (bandeau unifie, "Aucune disponibilite" reformule,
+  repli bureau/salle, horaires particuliers restyles, "Gerer mes reservations" a toutes les
+  etapes) etaient deja effectivement en ligne, sans probleme de cache.
 
 = 1.9.4 =
 * [space_reservation] Six points d'ergonomie releves lors du test complet d'Olivier du 31/08 :
