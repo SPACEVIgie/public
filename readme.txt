@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.6
+Stable tag: 1.9.7
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,19 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.7 =
+* [space_reservation] Correctif regression fraiche du lot D court (1.9.6) : le snapshot
+  d'identification (localStorage, TTL 2h) ne sauvegardait que la recherche mono-date -- un
+  client qui ajoutait des dates supplementaires puis s'identifiait en cours de saisie (bandeau
+  "Deja client ?", en haut du formulaire) les perdait au retour et repartait d'une seule date.
+  Le snapshot porte desormais aussi les dates supplementaires (chacune avec sa propre duree et
+  son creneau) et la disponibilite multi-dates deja chargee (evite un flash "Aucune
+  disponibilite" pendant le rafraichissement). Au retour, le mode devis se reimpose comme
+  attendu des que plusieurs dates sont restaurees (§8, inchange). Compatible avec un snapshot
+  pose par une version anterieure a 1.9.6 (repli sur un tableau de dates supplementaires vide,
+  comme avant ce chantier). Mono-date : comportement strictement inchange (verifie par un
+  harnais de tests). Aucun changement cote serveur.
 
 = 1.9.6 =
 * [space_reservation] Lot D court -- devis multi-dates. Etape 1 : ajout/retrait de plusieurs

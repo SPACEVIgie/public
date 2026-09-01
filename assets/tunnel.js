@@ -1678,7 +1678,13 @@
   // sur chaque date (calculerTarif est linéaire en duree — lib/tarification.js — sommer les
   // tarifs par jour d'une même salle donne exactement le même total que le regroupement par unité
   // fait côté serveur à la création, cf. routes/tunnel.js POST /reserver).
-  function doRechercheMulti() {
+  // (correctif 01/09) `conserverEtape` — même paramètre que doRecherche(), pour la même raison :
+  // la restauration du snapshot d'identification (init(), consumeSnapshot()) cible l'étape
+  // quittée pour s'identifier, qui peut être Salle/Options/Paiement (2/3/4), pas seulement la
+  // recherche. Sans ce paramètre, un client identifié depuis l'étape Paiement en plein
+  // multi-dates retombait à l'étape Salle après le rafraîchissement automatique — la donnée
+  // (dates, salle choisie) restait juste, mais l'écran revenait en arrière sans raison visible.
+  function doRechercheMulti(conserverEtape) {
     var s = state.search;
     if (!s.date || !s.capaciteMin) {
       state.error = 'Merci de renseigner une date et un effectif.';
@@ -1778,7 +1784,7 @@
       // §8 — imposé, pas seulement par défaut : le serveur refuserait tout autre mode en 400 dès
       // que jours.length > 1 (routes/tunnel.js POST /reserver).
       state.modePaiement = 'devis';
-      state.step = 2;
+      if (!conserverEtape) state.step = 2;
       render();
     }).catch(function (err) {
       state.loading = false;
@@ -1885,6 +1891,14 @@
         search: state.search, disponibilite: state.disponibilite, selectedEspaceId: state.selectedEspaceId,
         pauses: state.pauses, selectedRestauration: state.selectedRestauration,
         selectedAmenagementId: state.selectedAmenagementId,
+        // (correctif 01/09) trou du lot D court -- le snapshot ne portait que la recherche
+        // mono-date : un client qui ajoute des dates supplementaires (state.datesSupp) puis
+        // s'identifie en cours de saisie les perdait au retour (repartait d'une seule date).
+        // datesSupp voyage donc desormais lui aussi, avec sa propre duree/creneau par date (meme
+        // forme que joursRecherche() ci-dessus). disponibiliteMulti suit disponibilite : gardee le
+        // temps du rafraichissement au retour, pour eviter le meme flash "Aucune disponibilite"
+        // que le correctif du 29/08 evitait deja pour le mono-date.
+        datesSupp: state.datesSupp, disponibiliteMulti: state.disponibiliteMulti,
         // (correctif 29/08) step RÉEL — plus le "4" figé d'avant. L'identification est désormais
         // proposée dès l'étape 1/2 (renderIdentifyPrompt), pas seulement à l'étape Paiement :
         // reprendre toujours à 4 aurait fait sauter la recherche/le choix de salle pour un client
@@ -2273,6 +2287,11 @@
             // saisie perdue reste préférable à un écran cassé).
             pauses: snap.pauses || [], selectedRestauration: snap.selectedRestauration,
             selectedAmenagementId: snap.selectedAmenagementId,
+            // (correctif 01/09) même filet que pauses[] ci-dessus, même motif : un snapshot posé
+            // par la version d'AVANT le lot D court (v1.9.5 et antérieures, datesSupp n'existait
+            // pas encore) reste lisible pendant la fenêtre de 2h — on repart d'un tableau vide
+            // (mono-date, comportement identique à avant ce chantier) plutôt que de planter.
+            datesSupp: snap.datesSupp || [],
           });
           // (correctif 29/08 — diagnostic du jour) CAUSE CONFIRMÉE de la remise absente au
           // retour : `state.disponibilite` était repris TEL QUEL du snapshot, or ce snapshot a
@@ -2283,13 +2302,25 @@
           // snapshot le temps du rafraîchissement, pour éviter un écran "Aucune disponibilité"
           // qui flasherait pendant l'aller-retour réseau.
           state.disponibilite = snap.disponibilite;
+          // (correctif 01/09) même traitement que state.disponibilite juste au-dessus, pour la
+          // même raison, côté multi-dates : évite le flash "Aucune disponibilité" pendant le
+          // rafraîchissement ci-dessous quand des dates supplémentaires ont été restaurées.
+          state.disponibiliteMulti = snap.disponibiliteMulti || null;
           var s = state.search;
           if (s.date && s.capaciteMin) {
             // Étape ciblée = celle quittée pour s'identifier, au minimum l'écran Salle (rien à
             // afficher à l'étape Options/Paiement sans disponibilité déjà chargée).
             state.step = Math.max(snap.step || 2, 2);
             if (state.step >= 3) loadOptions();
-            doRecherche(null, true).then(function () {
+            // (correctif 01/09, trou du lot D court) — datesSupp restauré ci-dessus : si le client
+            // avait ajouté des dates supplémentaires avant de s'identifier, c'est
+            // doRechercheMulti() qu'il faut rejouer (avec le token désormais connu), pas
+            // doRecherche() qui ignore state.datesSupp et ne verrait que la première date. Le mode
+            // de paiement se réimpose de lui-même en 'devis' au rendu de l'étape Paiement
+            // (renderStepPaiement(), §8) dès que state.datesSupp n'est pas vide — rien à répéter
+            // ici.
+            var promesse = state.datesSupp.length ? doRechercheMulti(true) : doRecherche(null, true);
+            promesse.then(function () {
               if (state.step === 4) chargerOptionsPaiement();
             });
             return;
