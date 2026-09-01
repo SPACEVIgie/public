@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.5
+Stable tag: 1.9.6
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,20 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.6 =
+* [space_reservation] Lot D court -- devis multi-dates. Etape 1 : ajout/retrait de plusieurs
+  dates (non necessairement consecutives), chacune avec sa propre duree (Journee / Demi-journee +
+  Periode Matin/Apres-midi, meme vocabulaire que le lot B cote assistant staff). La recherche ne
+  retient une salle que si elle est libre sur TOUTES les dates demandees (sinon : "Aucune salle
+  n'est libre sur ces N dates" + une salle a laisser ses coordonnees, jamais un mur muet). Des que
+  plusieurs dates sont demandees, le mode devis est IMPOSE : le paiement en ligne (et le credit
+  salle / la facture fin de mois) ne sont plus proposes du tout (le serveur les refuserait de
+  toute facon en 400), avec une phrase d'explication a la place. Etape 5 (recapitulatif) : une
+  ligne par date au format du mail n. 4 "Tout est pret" (ex. "Lundi 21 septembre -- Apres-midi
+  (14:00-18:00)") avec le prix du jour, et un total juste. Mono-date : comportement et rendu
+  strictement inchanges (verifie par un harnais de tests). Aucun changement cote serveur -- il
+  acceptait deja unite/creneau par jour (lots A, C/F du 31/08).
 
 = 1.9.5 =
 * [space_reservation] Correctif : la note "Les prix integrent les eventuelles remises auxquelles

@@ -244,3 +244,12 @@
 .spr-stripe-element { min-height: 60px; padding: 16px; border: 1px solid var(--spr-border); border-radius: 12px; margin: 16px 0; background: #fff; }
 .spr-stripe-status { margin-bottom: 4px; }
 .spr-stripe-status .spr-banner { margin-bottom: 0; }
+
+/* (01/09, lot D court — devis multi-dates) — bloc "dates supplementaires" de l'etape 1 et ses
+   lignes (Date + Duree + Periode + Retirer). Meme famille visuelle que .spr-identify-box (cadre
+   discret en pointilles) : un formulaire optionnel, pas un choix majeur. */
+.spr-multi-dates { border: 1px dashed var(--spr-border); border-radius: 12px; padding: 16px 18px; margin-bottom: 20px; }
+.spr-multi-dates-title { font-weight: 700; font-size: 13.5px; margin-bottom: 12px; }
+.spr-multi-date-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+.spr-multi-date-row .spr-field { margin-bottom: 0; flex: 1 1 130px; min-width: 130px; }
+.spr-multi-date-row .spr-btn { flex-shrink: 0; }

@@ -33,12 +33,23 @@
   // setTimeout ne doit pas être recréé à chaque render(), qui réécrit tout le DOM.
   var _pauseUndoTimer = null;
   var _pauseKeySeq = 0;
+  // (01/09, lot D court -- devis multi-dates) -- compteur d'identifiants client pour les dates
+  // supplementaires, meme motif que _pauseKeySeq.
+  var _dateSuppKeySeq = 0;
 
   var state = {
     step: 1,
     config: null,
     search: { date: '', unite: 'journee', demiPeriode: 'matin', heureDebut: '', heureFin: '', typeReservation: 'salle_reunion', capaciteMin: '' },
     disponibilite: null,
+    // (01/09, lot D court) -- dates AU-DELA de state.search.date : {key, date, unite, demiPeriode}.
+    // Vide par defaut -> tunnel strictement mono-date, aucun changement de comportement (§ mono-date
+    // inchange). Des qu'une entree est ajoutee, le tunnel bascule en mode devis multi-dates (voir
+    // doRechercheMulti, joursRecherche, dispoActive ci-dessous).
+    datesSupp: [],
+    // Resultat de la recherche multi-dates (intersection des salles libres sur TOUTES les dates) --
+    // distinct de `disponibilite` (mono-date) pour ne jamais melanger les deux formes.
+    disponibiliteMulti: null,
     selectedEspaceId: null,
     optionsCatalogue: null,
     // (29/08, refonte modale pause) — remplace l'ancien `selectedPauses` (map qty par formule,
@@ -155,10 +166,18 @@
   // Chaque salle proposée porte SON PROPRE tarif (e.tarif, calculé à sa taille réelle côté serveur).
   // Le montant affiché suit la salle SÉLECTIONNÉE et se recalcule à chaque changement de choix. La
   // facturation est ancrée côté serveur sur la même taille réelle → prix affiché = prix facturé.
+  // (01/09, lot D court) -- source de disponibilite active : la recherche multi-dates des
+  // qu'au moins une date supplementaire existe, sinon EXACTEMENT `state.disponibilite` comme avant
+  // ce chantier (aucun changement de comportement mono-date).
+  function dispoActive() {
+    return state.datesSupp.length ? state.disponibiliteMulti : state.disponibilite;
+  }
+
   function espaceSelectionne() {
-    if (!state.disponibilite || !state.disponibilite.espaces) return null;
+    var d = dispoActive();
+    if (!d || !d.espaces) return null;
     var id = state.selectedEspaceId;
-    return state.disponibilite.espaces.filter(function (e) { return e.id === id; })[0] || null;
+    return d.espaces.filter(function (e) { return e.id === id; })[0] || null;
   }
 
   // NANR (29/08, decision Olivier) : miroir cote client de l'eligibilite J-21 controlee par
@@ -178,10 +197,13 @@
   }
 
   // Tarif de la salle choisie (repli sur le tarif global informatif si la salle n'en porte pas).
+  // (01/09) En multi-dates, e.tarif porte deja la SOMME des tarifs par jour (voir
+  // doRechercheMulti) -- cette fonction n'a rien d'autre a changer que sa source (dispoActive).
   function tarifSelection() {
     var e = espaceSelectionne();
     if (e && e.tarif) return e.tarif;
-    return state.disponibilite ? state.disponibilite.tarif : null;
+    var d = dispoActive();
+    return d ? d.tarif : null;
   }
 
   // Annonce de remise (29/08) — le serveur calcule ET rédige le texte (libelle_annonce,
@@ -320,17 +342,28 @@
   // n'a pas répondu. Ils sont alignés sur la grille S-RESA (§17.1bis). La requête, elle, ne les
   // embarque jamais pour la journée/demi-journée : elle transmet le créneau, et c'est le serveur
   // qui applique la grille (source unique, clés vigie_config sresa_horaire_*).
-  function computeCreneauHoraires() {
+  // (01/09, lot D court) -- memes horaires que ci-dessus, mais PARAMETRES (unite/demiPeriode
+  // explicites) pour etre reutilisables par jour, dans une recherche multi-dates ou chaque date
+  // porte sa propre duree. computeCreneauHoraires() delegue ici pour la date PRINCIPALE
+  // (state.search) -- comportement mono-date strictement identique a avant ce chantier.
+  function horairesPourJour(unite, demiPeriode) {
     var c = state.config || {};
-    if (state.search.unite === 'journee') {
+    if (unite === 'journee') {
       return { debut: c.journee_debut || '08:30', fin: c.journee_fin || '18:00' };
     }
-    if (state.search.unite === 'demi_journee') {
-      return state.search.demiPeriode === 'matin'
+    if (unite === 'demi_journee') {
+      return demiPeriode === 'matin'
         ? { debut: c.matin_debut || '08:30', fin: c.matin_fin || '12:30' }
         : { debut: c.apresmidi_debut || '14:00', fin: c.apresmidi_fin || '18:00' };
     }
-    return { debut: state.search.heureDebut, fin: state.search.heureFin };
+    return { debut: '', fin: '' };
+  }
+
+  function computeCreneauHoraires() {
+    if (state.search.unite === 'heure') {
+      return { debut: state.search.heureDebut, fin: state.search.heureFin };
+    }
+    return horairesPourJour(state.search.unite, state.search.demiPeriode);
   }
 
   // Pas de granularité des créneaux horaires (§17.17.1) — servi par le SERVEUR dans /tunnel/creneaux
@@ -403,6 +436,65 @@
   function formatDateFr(iso) {
     var d = new Date(iso + 'T00:00:00');
     return d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear();
+  }
+
+  // ===================== LOT D COURT (01/09) — DEVIS MULTI-DATES =====================
+  // Liste ORDONNÉE des jours de la recherche en cours : la date principale (state.search) suivie
+  // des dates supplémentaires (state.datesSupp), chacune normalisée en {date_jour, unite, creneau,
+  // heure_debut?, heure_fin?} — même vocabulaire que le serveur (routes/tunnel.js POST /reserver,
+  // lib/creerReservation.js resoudreJour : jour.unite/jour.creneau prévalent déjà sur
+  // unite_choisie/creneau globaux, en toute rétrocompatibilité). Sans date supplémentaire, renvoie
+  // EXACTEMENT le même objet qu'avant ce chantier (un seul élément, mêmes clés) — c'est ce qui
+  // garantit que le mono-date reste inchangé partout où cette fonction remplace l'ancien code
+  // (chargerOptionsPaiement, construirePayload).
+  function joursRecherche() {
+    var s = state.search;
+    var estHeure = s.unite === 'heure';
+    var primary = {
+      date_jour: s.date, unite: s.unite, creneau: computeCreneau(),
+      heure_debut: estHeure ? s.heureDebut : undefined,
+      heure_fin: estHeure ? s.heureFin : undefined,
+    };
+    if (!state.datesSupp.length) return [primary];
+    var extra = state.datesSupp.map(function (d) {
+      return {
+        date_jour: d.date, unite: d.unite,
+        creneau: d.unite === 'demi_journee' ? (d.demiPeriode === 'apresmidi' ? 'apres_midi' : 'matin') : undefined,
+      };
+    });
+    return [primary].concat(extra);
+  }
+
+  // Libellé de date long, capitalisé — MÊME FORMULE que le mail n°4 (lib/emailToutEstPret.js,
+  // dateDebutLabel/dLabel) : Intl fr-FR, weekday/day/month, première lettre mise en majuscule.
+  // Choisi pour que le client reconnaisse le même vocabulaire d'une communication à l'autre.
+  function libelleDateFrLong(iso) {
+    var d = new Date(iso + 'T00:00:00');
+    var label = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  }
+
+  // Libellé de durée par jour — MÊME FORMULE que libelleDureeJour (lib/emailToutEstPret.js, lot
+  // C/F du 31/08) : « Après-midi (14:00–18:00) », « Journée (08:30–18:00) ». demiPeriode ici suit
+  // la convention CLIENT ('matin'/'apresmidi', cf. state.search.demiPeriode), traduite comme le
+  // fait déjà computeCreneau() pour le serveur ('apres_midi').
+  function libelleDureeJourClient(unite, demiPeriode) {
+    var hor = horairesPourJour(unite, demiPeriode);
+    var horaires = hor.debut && hor.fin ? (hor.debut + '–' + hor.fin) : '';
+    if (unite === 'demi_journee') {
+      var mot = demiPeriode === 'apresmidi' ? 'Après-midi' : 'Matin';
+      return horaires ? (mot + ' (' + horaires + ')') : mot;
+    }
+    if (unite === 'journee') {
+      return horaires ? ('Journée (' + horaires + ')') : 'Journée complète';
+    }
+    return horaires;
+  }
+
+  // Ligne « <Jour> <date> — <Durée> (<horaires>) » du récapitulatif multi-dates (étape 5) — même
+  // gabarit que le mail n°4 (§5 du cadrage : « reprendre EXACTEMENT ce format »).
+  function ligneJourLabel(dateIso, unite, demiPeriode) {
+    return libelleDateFrLong(dateIso) + ' — ' + libelleDureeJourClient(unite, demiPeriode);
   }
 
   // (31/08, ergonomie tunnel §4) — libellé lisible d'un type d'espace (espaces.type_reservation),
@@ -572,19 +664,71 @@
       '</div>',
       demiField, heureFields,
       (s.unite !== 'heure' && libelleCreneau()) ? h(['<div class="spr-hint">Horaires : ', esc(libelleCreneau()), '</div>']) : '',
+      renderMultiDatesBlock(),
       '<div class="spr-actions spr-end"><button class="spr-btn spr-primary" id="spr-btn-rechercher"', state.loading ? ' disabled' : '', '>', state.loading ? 'Recherche…' : 'Rechercher', '</button></div>',
+      '</div>']);
+  }
+
+  // (01/09, lot D court) — bloc « dates supplémentaires » de l'étape 1 : une ligne par date déjà
+  // ajoutée (date + Durée, même vocabulaire Journée/Demi-journée + Période Matin/Après-midi que le
+  // sélecteur principal ci-dessus et que le lot B côté assistant staff, app.js
+  // detailAjouterJourForm) + un bouton « Ajouter une date ». Vide (state.datesSupp = []) → ce bloc
+  // ne rend qu'un bouton d'ajout, la recherche reste mono-date (§ mono-date inchangé).
+  function renderMultiDatesBlock() {
+    var s = state.search;
+    var rows = state.datesSupp.map(function (d) {
+      var demiSel = d.unite === 'demi_journee';
+      return h(['<div class="spr-multi-date-row">',
+        '<div class="spr-field"><label>Date</label><input type="date" class="spr-multi-date-date" data-key="', d.key, '" value="', esc(d.date), '"></div>',
+        '<div class="spr-field"><label>Durée</label><select class="spr-multi-date-unite" data-key="', d.key, '">',
+        '<option value="journee"', d.unite === 'journee' ? ' selected' : '', '>Journée</option>',
+        '<option value="demi_journee"', demiSel ? ' selected' : '', '>Demi-journée</option>',
+        '</select></div>',
+        demiSel ? h(['<div class="spr-field"><label>Période</label><select class="spr-multi-date-periode" data-key="', d.key, '">',
+          '<option value="matin"', d.demiPeriode === 'matin' ? ' selected' : '', '>Matin</option>',
+          '<option value="apresmidi"', d.demiPeriode === 'apresmidi' ? ' selected' : '', '>Après-midi</option>',
+          '</select></div>']) : '',
+        '<button type="button" class="spr-btn spr-ghost spr-multi-date-retirer" data-key="', d.key, '">Retirer</button>',
+        '</div>']);
+    }).join('');
+    // « Heures précises » ne fait pas partie du vocabulaire multi-dates (lot B non plus) : on
+    // n'invite pas à ajouter une date tant que la date principale est en heures précises, plutôt
+    // que de proposer un mode qui obligerait à re-choisir une durée incompatible.
+    var peutAjouter = s.unite !== 'heure';
+    return h(['<div class="spr-multi-dates">',
+      '<div class="spr-multi-dates-title">Plusieurs dates ?</div>',
+      rows,
+      peutAjouter
+        ? '<button type="button" class="spr-btn" id="spr-btn-ajouter-date">+ Ajouter une date</button>'
+        : '<div class="spr-hint">« Heures précises » n\'est pas proposé pour plusieurs dates.</div>',
+      state.datesSupp.length ? h(['<div class="spr-hint">Une réservation sur plusieurs dates est traitée en demande de devis : notre équipe valide et confirme avant toute facturation.</div>']) : '',
       '</div>']);
   }
 
   // ---- Étape 2 : choix de la salle (tarif PAR SALLE) ----
   function renderStepSalle() {
-    var d = state.disponibilite;
+    // (01/09, lot D court) — dispoActive() vaut EXACTEMENT state.disponibilite tant qu'aucune date
+    // supplémentaire n'existe : rien ne change ici pour le mono-date.
+    var multiJours = state.datesSupp.length > 0;
+    var d = dispoActive();
     // (correctif 29/08) Bandeau d'identification repris ICI aussi, pas seulement à l'étape 1 : le
     // préremplissage depuis [space_disponibilite] (preferCode/prefillDate/capacité, cf. init())
     // saute directement l'étape 1 et atterrit ici — sans ce second point d'entrée, ce parcours-là
     // ne verrait jamais la proposition avant l'étape Paiement.
     var identifyBanner = renderIdentifyPrompt();
     if (!d || !d.espaces.length) {
+      // (01/09, lot D court) — « aucune salle sur l'ENSEMBLE des dates » n'est pas la même
+      // situation que le mono-date : jamais un mur — deux issues, comme le mono-date (§3, 31/08) :
+      // modifier les dates, ou laisser ses coordonnées (renderListeAttenteBox, réutilisée telle
+      // quelle).
+      if (multiJours) {
+        return identifyBanner + h(['<div class="spr-card">',
+          '<div class="spr-title">Aucune disponibilité</div>',
+          '<div class="spr-subtitle">Aucune salle n\'est libre sur ces ', (1 + state.datesSupp.length), ' dates. Essayez d\'autres dates, ou laissez-nous vos coordonnées.</div>',
+          '<div class="spr-actions spr-end"><button class="spr-btn" id="spr-btn-retour1">← Modifier les dates</button></div>',
+          renderListeAttenteBox(),
+          '</div>']);
+      }
       // (31/08, ergonomie tunnel §3) — DEUX issues, pas une : jusqu'ici le texte ne parlait que de
       // la liste d'attente alors que « Modifier la recherche » (une autre date, un autre effectif)
       // existait déjà en bouton — un client pouvait croire qu'il n'avait pas le choix. Le bouton
@@ -653,9 +797,12 @@
       '</span>',
       '</div>', renderAnnonceRemise()]) : '';
 
+    var sousTitreDate = multiJours
+      ? ((1 + state.datesSupp.length) + ' dates sélectionnées')
+      : formatDateFr(state.search.date);
     return identifyBanner + h(['<div class="spr-card">',
       '<div class="spr-title">Choisissez votre espace</div>',
-      '<div class="spr-subtitle">', formatDateFr(state.search.date), ' — chaque salle est affichée à son tarif.</div>',
+      '<div class="spr-subtitle">', sousTitreDate, ' — chaque salle est affichée à son tarif', multiJours ? ' total' : '', '.</div>',
       repliBanner,
       roomsHtml,
       recapSel,
@@ -879,6 +1026,12 @@
 
   // ---- Étape 4 : identification + mode de paiement + coordonnées ----
   function renderStepPaiement() {
+    // (01/09, lot D court) — §8 : mode devis IMPOSÉ dès que plusieurs dates sont demandées (le
+    // serveur refuserait tout autre mode en 400, routes/tunnel.js POST /reserver). Recalculé à
+    // chaque rendu (idempotent) plutôt qu'une seule fois à la recherche, pour rester vrai même si
+    // l'utilisateur revient en arrière ajouter une date après avoir déjà choisi un autre mode.
+    var multiJours = state.datesSupp.length > 0;
+    if (multiJours) { state.modePaiement = 'devis'; }
     var identifBlock;
     if (state.identifie) {
       // (31/08, §6) — même badge que renderIdentifyPrompt() (étapes 1-3), désormais partagé via
@@ -901,7 +1054,12 @@
     // quoi que dise le serveur sur la disponibilité du paiement en ligne/crédit/facture — leur
     // proposer un mode que POST /reserver refusera ensuite (403, §3 du cadrage) serait un mur
     // après coup. Un client identifié garde tous les modes, inchangé.
-    if (state.identifie) {
+    // (01/09, lot D court) — « inchangé » CI-DESSUS ne vaut que hors multi-dates : le serveur
+    // rejette tout mode ≠ 'devis' dès que plusieurs jours sont envoyés (§8), quel que soit le
+    // client. Ne proposer QUE le devis ici, jamais un choix que l'envoi refuserait ensuite (même
+    // principe que la restriction anonyme ci-dessus — « un formulaire qui propose ce qu'il refuse
+    // est pire qu'un formulaire contraint », 31/08).
+    if (state.identifie && !multiJours) {
       // §4.9 — Paiement en ligne par carte : proposé UNIQUEMENT si le SERVEUR le déclare possible
       // (Stripe configuré, réservation sur un seul jour…). La règle est portée par l'endpoint
       // /options-paiement (§17.14 : pas de règle de bascule figée côté plugin). Visible DÈS LE CHOIX.
@@ -927,7 +1085,13 @@
     // RÉSERVÉ au client identifié (ci-dessus) : pour un nouveau client, l'absence de paiement en
     // ligne n'est pas un motif d'indisponibilité ponctuelle, c'est la politique du tunnel.
     var indispoNote = '';
-    if (state.identifie && !op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
+    // (01/09, lot D court) — §4 du cadrage : « expliquer, pas juste refuser » — une phrase, pas un
+    // mur, à la place du choix de paiement absent. Prioritaire sur l'explication mono-date
+    // ci-dessous (les deux ne peuvent pas être vraies en même temps : multiJours implique déjà
+    // qu'aucun autre mode n'est proposé).
+    if (multiJours) {
+      indispoNote = h(['<div class="spr-hint">Pour une réservation sur plusieurs dates, nous établissons un devis : notre équipe valide et confirme votre réservation avant toute facturation.</div>']);
+    } else if (state.identifie && !op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
       var reg = op.regles_horaires;
       var surcout = '';
       if (reg && reg.hors_horaires && reg.hors_horaires.concerne && Number(reg.hors_horaires.surcout_ht) > 0) {
@@ -1130,6 +1294,7 @@
 
   // ---- Étape 5 : récapitulatif ----
   function renderStepRecap() {
+    var multiJours = state.datesSupp.length > 0;
     var espace = espaceSelectionne();
     // §4.9/§4.17 ext. — le total DOIT porter salle + options (bug corrigé le 24/08, cf.
     // montantSelection). On détaille les deux lignes dès que des options sont sélectionnées, pour que
@@ -1149,12 +1314,33 @@
     var modeLabels = { devis: 'Demande de devis', en_ligne: 'Paiement en ligne par carte', credit_salle: 'Crédit salle', sur_facture: 'Facture fin de mois' };
     var enLigne = state.modePaiement === 'en_ligne';
 
+    // (01/09, lot D court) — une ligne PAR DATE, MÊME FORMAT que le mail n°4 (§5 du cadrage :
+    // « Lundi 21 septembre — Après-midi (14:00–18:00) », lib/emailToutEstPret.js::libelleDureeJour)
+    // + le prix de CE jour pour la salle choisie (state.disponibiliteMulti.parJour, posé par
+    // doRechercheMulti — tarif linéaire en duree, donc le prix par jour est exact, pas une
+    // approximation). Mono-date : une seule ligne « Date », strictement inchangée.
+    var dateLignesHtml;
+    if (multiJours && state.disponibiliteMulti) {
+      var joursTries = [{ date: state.search.date, unite: state.search.unite, demiPeriode: state.search.demiPeriode }]
+        .concat(state.datesSupp)
+        .slice()
+        .sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+      dateLignesHtml = joursTries.map(function (j) {
+        var pj = state.disponibiliteMulti.parJour.filter(function (x) { return x.date === j.date; })[0];
+        var tarifJour = (pj && espace) ? pj.especesParId[espace.id] : null;
+        var prix = (tarifJour && !tarifJour.erreur) ? fmtTtc(tarifJour) : '';
+        return h(['<div class="spr-recap-line"><span>', esc(ligneJourLabel(j.date, j.unite, j.demiPeriode)), '</span><span>', prix, '</span></div>']);
+      }).join('');
+    } else {
+      dateLignesHtml = h(['<div class="spr-recap-line"><span>Date</span><span>', formatDateFr(state.search.date), '</span></div>']);
+    }
+
     // (31/08, §6) — le badge (et « Gérer mes réservations ») suit désormais le client à TOUTES
     // les étapes, pas seulement 1 à 4.
     return (state.identifie ? renderConnectedChip() : '') + h(['<div class="spr-card">',
       '<div class="spr-title">Récapitulatif</div>',
       '<div class="spr-recap-line"><span>Espace</span><span>', esc(espace ? espace.nom : ''), espace && espace.surclasse ? ' (plus grande)' : '', '</span></div>',
-      '<div class="spr-recap-line"><span>Date</span><span>', formatDateFr(state.search.date), '</span></div>',
+      dateLignesHtml,
       '<div class="spr-recap-line"><span>Effectif</span><span>', esc(state.search.capaciteMin), ' personnes</span></div>',
       '<div class="spr-recap-line"><span>Paiement</span><span>', modeLabels[state.modePaiement] || state.modePaiement, '</span></div>',
       state.nonRemboursable ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable (-25%)</span></div>']) : '',
@@ -1249,15 +1435,36 @@
     if (state.step === 1) {
       if (byId('spr-date')) byId('spr-date').onchange = function (e) { state.search.date = e.target.value; };
       if (byId('spr-type')) byId('spr-type').onchange = function (e) { state.search.typeReservation = e.target.value; };
-      if (byId('spr-unite')) byId('spr-unite').onchange = function (e) { state.search.unite = e.target.value; render(); };
+      if (byId('spr-unite')) byId('spr-unite').onchange = function (e) {
+        state.search.unite = e.target.value;
+        // (01/09, lot D court) — « heures précises » n'est pas géré en multi-dates (§ hors
+        // périmètre) : basculer dessus efface les dates supplémentaires plutôt que de laisser un
+        // état incohérent (un bouton « Ajouter une date » qui n'existerait déjà plus).
+        if (state.search.unite === 'heure' && state.datesSupp.length) { state.datesSupp = []; }
+        render();
+      };
       if (byId('spr-capacite')) byId('spr-capacite').onchange = function (e) { state.search.capaciteMin = e.target.value; };
       if (byId('spr-demi')) byId('spr-demi').onchange = function (e) { state.search.demiPeriode = e.target.value; render(); };
       if (byId('spr-heure-debut')) byId('spr-heure-debut').onchange = function (e) { state.search.heureDebut = e.target.value; render(); };
       if (byId('spr-heure-fin')) byId('spr-heure-fin').onchange = function (e) { state.search.heureFin = e.target.value; render(); };
+      // (01/09, lot D court) — bloc « dates supplémentaires » : ajout/retrait/édition d'une ligne.
+      if (byId('spr-btn-ajouter-date')) byId('spr-btn-ajouter-date').onclick = ajouterDateSupp;
+      document.querySelectorAll('.spr-multi-date-date').forEach(function (el) {
+        el.onchange = function (e) { changerDateSupp(Number(el.dataset.key), 'date', e.target.value); };
+      });
+      document.querySelectorAll('.spr-multi-date-unite').forEach(function (el) {
+        el.onchange = function (e) { changerDateSupp(Number(el.dataset.key), 'unite', e.target.value); render(); };
+      });
+      document.querySelectorAll('.spr-multi-date-periode').forEach(function (el) {
+        el.onchange = function (e) { changerDateSupp(Number(el.dataset.key), 'demiPeriode', e.target.value); };
+      });
+      document.querySelectorAll('.spr-multi-date-retirer').forEach(function (el) {
+        el.onclick = function () { retirerDateSupp(Number(el.dataset.key)); };
+      });
       // Fonction nommée (pas doRecherche directement) : un handler onclick reçoit le MouseEvent en
       // 1er argument, qui atterrirait sinon dans preferCode (§1.5.0, préremplissage) — sans effet
       // réel (aucune salle ne matche jamais un événement), mais pas la peine de compter dessus.
-      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = function () { state.nonRemboursable = false; doRecherche(); };
+      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = function () { state.nonRemboursable = false; lancerRecherche(); };
     } else if (state.step === 2) {
       document.querySelectorAll('input[name="spr-espace"]').forEach(function (r) {
         r.onchange = function (e) { state.selectedEspaceId = Number(e.target.value); render(); };
@@ -1437,6 +1644,149 @@
     });
   }
 
+  // ===================== LOT D COURT (01/09) — RECHERCHE ET ACTIONS MULTI-DATES =====================
+  // Point d'entrée unique du bouton « Rechercher » de l'étape 1 : bascule vers la recherche
+  // multi-dates dès qu'au moins une date supplémentaire existe, sinon appelle EXACTEMENT
+  // doRecherche() (mono-date), sans aucun changement à cette fonction — § mono-date inchangé.
+  function lancerRecherche() {
+    if (state.datesSupp.length) { doRechercheMulti(); return; }
+    doRecherche();
+  }
+
+  function ajouterDateSupp() {
+    state.datesSupp.push({ key: ++_dateSuppKeySeq, date: '', unite: 'journee', demiPeriode: 'matin' });
+    render();
+  }
+
+  function retirerDateSupp(key) {
+    state.datesSupp = state.datesSupp.filter(function (d) { return d.key !== key; });
+    render();
+  }
+
+  function changerDateSupp(key, field, value) {
+    var d = state.datesSupp.filter(function (x) { return x.key === key; })[0];
+    if (!d) return;
+    d[field] = value;
+  }
+
+  // Recherche sur PLUSIEURS dates (non nécessairement consécutives) : une salle n'est retenue que
+  // si elle est libre sur TOUTES les dates demandées — une requête GET /tunnel/disponibilite par
+  // date (même endpoint que le mono-date, duree=1 comme toujours pour journee/demi_journee),
+  // puis intersection des identifiants de salle côté client (aucun endpoint combiné côté serveur,
+  // cf. cadrage « rien à construire côté disponibilité partielle » — chaque appel, lui, est déjà
+  // du serveur qui accepte). Le tarif de chaque salle candidate est la SOMME de son tarif propre
+  // sur chaque date (calculerTarif est linéaire en duree — lib/tarification.js — sommer les
+  // tarifs par jour d'une même salle donne exactement le même total que le regroupement par unité
+  // fait côté serveur à la création, cf. routes/tunnel.js POST /reserver).
+  function doRechercheMulti() {
+    var s = state.search;
+    if (!s.date || !s.capaciteMin) {
+      state.error = 'Merci de renseigner une date et un effectif.';
+      render();
+      return Promise.resolve();
+    }
+    var toutesDates = [{ date: s.date, unite: s.unite, demiPeriode: s.demiPeriode }].concat(state.datesSupp);
+    for (var i = 0; i < toutesDates.length; i++) {
+      if (!toutesDates[i].date) {
+        state.error = 'Merci de renseigner toutes les dates ajoutées, ou de retirer celles qui sont vides.';
+        render();
+        return Promise.resolve();
+      }
+    }
+    var vues = {};
+    for (var k = 0; k < toutesDates.length; k++) {
+      if (vues[toutesDates[k].date]) {
+        state.error = 'Chaque date ne peut être ajoutée qu\'une seule fois.';
+        render();
+        return Promise.resolve();
+      }
+      vues[toutesDates[k].date] = true;
+    }
+
+    state.loading = true;
+    state.error = null;
+    render();
+
+    var requetes = toutesDates.map(function (j) {
+      var creneau = j.unite === 'demi_journee' ? (j.demiPeriode === 'apresmidi' ? 'apres_midi' : 'matin') : undefined;
+      var qs = '?date_debut=' + encodeURIComponent(j.date) + '&date_fin=' + encodeURIComponent(j.date)
+        + '&capacite_min=' + encodeURIComponent(s.capaciteMin) + '&unite=' + encodeURIComponent(j.unite)
+        + '&duree=1&type_reservation=' + encodeURIComponent(s.typeReservation)
+        + (creneau ? '&creneau=' + encodeURIComponent(creneau) : '')
+        + '&non_remboursable=0'
+        + (state.token ? '&token=' + encodeURIComponent(state.token) : '');
+      return api('/tunnel/disponibilite' + qs).then(function (data) { return { jour: j, data: data }; });
+    });
+
+    return Promise.all(requetes).then(function (resultats) {
+      state.loading = false;
+      state.identifie = !!resultats[0].data.identifie;
+      state.identiteInfo = resultats[0].data.identite_info || null;
+
+      var idSets = resultats.map(function (r) { return r.data.espaces.map(function (e) { return e.id; }); });
+      var communs = idSets.length ? idSets.reduce(function (acc, ids) {
+        var set = {};
+        ids.forEach(function (id) { set[id] = true; });
+        return acc.filter(function (id) { return set[id]; });
+      }) : [];
+
+      var espacesCombines = communs.map(function (id) {
+        var premier = null;
+        var htBrut = 0, reduction = 0, htNet = 0, ttc = 0, tvaPct = 20;
+        var surclasse = false, libelleAnnonce = null, erreur = null;
+        resultats.forEach(function (r) {
+          var e = r.data.espaces.filter(function (x) { return x.id === id; })[0];
+          if (!e) return;
+          if (!premier) premier = e;
+          if (e.surclasse) surclasse = true;
+          if (e.tarif && e.tarif.erreur) { erreur = e.tarif.erreur; return; }
+          if (e.tarif) {
+            htBrut += Number(e.tarif.tarif_ht_brut) || 0;
+            reduction += Number(e.tarif.montant_reduction_total) || 0;
+            htNet += Number(e.tarif.tarif_ht_net) || 0;
+            ttc += Number(e.tarif.tarif_ttc) || 0;
+            tvaPct = e.tarif.tva_pct;
+            if (e.tarif.libelle_annonce) libelleAnnonce = e.tarif.libelle_annonce;
+          }
+        });
+        return {
+          id: id, nom: premier.nom, code: premier.code, capacite: premier.capacite,
+          surclasse: surclasse, url_fiche_site: premier.url_fiche_site,
+          tarif: erreur ? { erreur: erreur } : {
+            tarif_ht_brut: round2(htBrut), montant_reduction_total: round2(reduction),
+            tarif_ht_net: round2(htNet), tva_pct: tvaPct, tarif_ttc: round2(ttc),
+            libelle_annonce: libelleAnnonce,
+          },
+        };
+      });
+
+      var parJour = resultats.map(function (r) {
+        var especesParId = {};
+        (r.data.espaces || []).forEach(function (e) { especesParId[e.id] = e.tarif; });
+        return { date: r.jour.date, unite: r.jour.unite, demiPeriode: r.jour.demiPeriode, especesParId: especesParId };
+      });
+
+      state.disponibiliteMulti = {
+        espaces: espacesCombines,
+        parJour: parJour,
+        taille_demandee: resultats[0].data.taille_demandee,
+      };
+
+      var espaceAvant = state.selectedEspaceId;
+      var conserve = espaceAvant ? espacesCombines.filter(function (e) { return e.id === espaceAvant; })[0] : null;
+      state.selectedEspaceId = conserve ? conserve.id : (espacesCombines.length ? espacesCombines[0].id : null);
+      // §8 — imposé, pas seulement par défaut : le serveur refuserait tout autre mode en 400 dès
+      // que jours.length > 1 (routes/tunnel.js POST /reserver).
+      state.modePaiement = 'devis';
+      state.step = 2;
+      render();
+    }).catch(function (err) {
+      state.loading = false;
+      state.error = err.message;
+      render();
+    });
+  }
+
   // NANR (29/08) : re-simule la disponibilite/le tarif avec le nouveau choix, SANS changer
   // d'etape (l'utilisateur est deja a l'etape paiement quand il coche/decoche).
   function toggleNonRemboursable() {
@@ -1482,18 +1832,18 @@
   // disponibilité (§17.14). Un client identifié y ajoute crédit salle / facture fin de mois.
   function chargerOptionsPaiement() {
     var montant = montantSelection();
-    var nbJours = 1; // tunnel public = une seule journée / demi-journée / plage à la fois
     // §17.17/§17.19 — on transmet la FENÊTRE (salle + jour + créneau/heures) pour que le serveur
     // évalue hors-horaires / délai court / créneau contesté DÈS LE CHOIX, et renvoie le POURQUOI du
     // refus de paiement en ligne. Le plugin ne décide de rien : il affiche ce que dit le serveur.
     var s = state.search;
     var estHeure = s.unite === 'heure';
     var creneau = computeCreneau();
-    var jour = {
-      date_jour: s.date, unite: s.unite, creneau: creneau,
-      heure_debut: estHeure ? s.heureDebut : undefined,
-      heure_fin: estHeure ? s.heureFin : undefined,
-    };
+    // (01/09, lot D court) — joursRecherche() renvoie EXACTEMENT [jour] (même forme qu'avant ce
+    // chantier) quand aucune date supplémentaire n'existe ; la liste complète sinon, pour que la
+    // prévisualisation de majoration jour férié (§17.24) et nb_jours restent justes en multi-dates
+    // aussi (même si, en multi-dates, seul le mode 'devis' est de toute façon proposé ensuite).
+    var jours = joursRecherche();
+    var nbJours = jours.length;
     api('/tunnel/options-paiement', {
       method: 'POST',
       body: JSON.stringify({
@@ -1501,7 +1851,7 @@
         espace_id: state.selectedEspaceId, unite_choisie: s.unite, creneau: creneau,
         heure_debut: estHeure ? s.heureDebut : undefined,
         heure_fin: estHeure ? s.heureFin : undefined,
-        jours: [jour],
+        jours: jours,
       }),
     }).then(function (data) {
       state.optionsPaiement = data;
@@ -1661,17 +2011,39 @@
   function construirePayload() {
     var s = state.search;
     var estHeure = s.unite === 'heure';
+    var multiJours = state.datesSupp.length > 0;
     var options = { pauses: [], restauration: [], amenagement_id: state.selectedAmenagementId || undefined };
     // (29/08, refonte modale pause) — heure_pause n'est plus jamais '10:30' en dur : chaque
     // pause de state.pauses porte désormais la sienne, saisie dans la modale (défaut proposé =
     // heureParDefautPause(), toujours modifiable). Le serveur (routes/tunnel.js POST /reserver)
     // acceptait déjà ce tableau tel quel, sans changement de son côté.
-    state.pauses.forEach(function (pz) {
-      options.pauses.push({ date_jour: s.date, heure_pause: pz.heure_pause, formule_id: pz.formule_id, nombre_personnes: pz.nombre_personnes });
+    // (01/09, lot D court) — les options sont choisies UNE SEULE FOIS (étape 3, hors périmètre de
+    // ce chantier) mais doivent être RÉPÉTÉES sur CHAQUE date en multi-dates : le serveur les
+    // rattache par date_jour (routes/tunnel.js POST /reserver, joursParDate[p.date_jour]) — sans
+    // cette répétition, seule la première date recevrait la pause/le plateau repas. L'aménagement
+    // (amenagement_id) n'a pas besoin d'être répété : le serveur l'applique déjà à TOUS les jours
+    // créés, tel quel, mono comme multi.
+    var datesOptions = multiJours ? joursRecherche() : [{ date_jour: s.date }];
+    datesOptions.forEach(function (j) {
+      state.pauses.forEach(function (pz) {
+        options.pauses.push({ date_jour: j.date_jour, heure_pause: pz.heure_pause, formule_id: pz.formule_id, nombre_personnes: pz.nombre_personnes });
+      });
+      if (state.selectedRestauration > 0 && state.optionsCatalogue.restauration.length) {
+        options.restauration.push({ date_jour: j.date_jour, nombre_personnes: state.selectedRestauration, heure_livraison: '12:30' });
+      }
     });
-    if (state.selectedRestauration > 0 && state.optionsCatalogue.restauration.length) {
-      options.restauration.push({ date_jour: s.date, nombre_personnes: state.selectedRestauration, heure_livraison: '12:30' });
-    }
+
+    // (01/09, lot D court) — chaque jour porte désormais SA PROPRE unite/creneau quand plusieurs
+    // dates sont demandées (jour.unite/jour.creneau prévalent déjà côté serveur sur
+    // unite_choisie/creneau globaux, cf. lib/creerReservation.js resoudreJour) — sans cela, TOUS
+    // les jours seraient facturés/bloqués sur l'unité de la date principale, faux dès qu'une date
+    // diffère (même piège que le tarif avant le lot A). Mono-date : forme EXACTEMENT identique à
+    // avant ce chantier (aucun champ unite/creneau sur l'unique jour, comme avant).
+    var jours = multiJours
+      ? joursRecherche().map(function (j) {
+          return { date_jour: j.date_jour, nombre_personnes_devis: Number(s.capaciteMin), unite: j.unite, creneau: j.creneau };
+        })
+      : [{ date_jour: s.date, nombre_personnes_devis: Number(s.capaciteMin) }];
 
     var payload = {
       token: state.token || undefined,
@@ -1683,10 +2055,10 @@
       creneau: computeCreneau(),
       heure_debut: estHeure ? s.heureDebut : undefined,
       heure_fin: estHeure ? s.heureFin : undefined,
-      jours: [{ date_jour: s.date, nombre_personnes_devis: Number(s.capaciteMin) }],
+      jours: jours,
       // Catégorie initialement demandée (trace + surclassement). La FACTURATION est ancrée côté
       // serveur sur la taille RÉELLE de la salle choisie (release v1.2.0) → prix affiché = prix facturé.
-      taille_demandee_id: state.disponibilite.taille_demandee.id,
+      taille_demandee_id: multiJours ? state.disponibiliteMulti.taille_demandee.id : state.disponibilite.taille_demandee.id,
       unite: s.unite,
       duree: computeDuree(),
       mode_paiement: state.modePaiement,
