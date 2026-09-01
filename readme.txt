@@ -43,9 +43,18 @@ navigateur du visiteur, vers l'API S-RESA.
 
 == Limites de la version actuelle ==
 
-* Réservation sur une seule journée / demi-journée / plage horaire à la fois (pas de
-  réservation multi-jours depuis le tunnel public — une telle demande passe par l'équipe,
-  sans paiement en ligne).
+* Réservation sur plusieurs dates (non consécutives) prise en charge depuis le tunnel
+  public : demande de devis dans tous les cas depuis la version 1.9.6, paiement en ligne
+  par carte pour un client identifié depuis la version 1.9.8. Le crédit salle et le
+  règlement sur facture fin de mois, eux, restent réservés à une réservation d'un seul jour
+  — sur plusieurs dates, seuls devis et paiement en ligne sont proposés.
+* Aucun mode de paiement immédiat (carte, crédit salle ou facture) n'est proposé sur une
+  date de réservation qui tombe un jour férié validé — seule ou parmi d'autres dates d'une
+  même demande : le centre est fermé ce jour-là, la demande passe automatiquement en devis
+  pour validation par l'équipe.
+* Le règlement sur facture fin de mois n'est proposé qu'aux clients ayant déjà un contrat
+  actif chez S-PACE (jamais à un prospect, ni à un compte marqué inactif) : le mode de
+  paiement affiché dépend du profil du client, décidé par le serveur, jamais par ce plugin.
 * Prêt de matériel non proposé en ligne (nécessite une vérification côté S-PACE).
 * `[space_disponibilite]` ne propose jamais un jour férié (même partiellement ouvert) : une
   réservation posée sur un férié n'est de toute façon jamais confirmée automatiquement. Ce
