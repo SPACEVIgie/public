@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.7
+Stable tag: 1.9.8
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,15 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.8 =
+* [space_reservation] Lot D complet : le paiement en ligne par carte (Stripe) est désormais
+  proposé aux clients identifiés même sur une réservation portant sur plusieurs dates (jusqu'ici
+  seule la demande de devis était possible dès qu'une seconde date était ajoutée). Crédit salle
+  et facture fin de mois restent réservés à une réservation d'un seul jour (confirmation/débit
+  immédiat sur plusieurs jours à la fois n'a jamais été proposé). Le récapitulatif détaillait déjà
+  chaque date avec son tarif et sa majoration jour férié éventuelle (lot D court, 1.9.6/1.9.7) --
+  inchangé. Réservation mono-date : aucun changement de comportement.
 
 = 1.9.7 =
 * [space_reservation] Correctif regression fraiche du lot D court (1.9.6) : le snapshot

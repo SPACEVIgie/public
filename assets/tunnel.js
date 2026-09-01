@@ -701,7 +701,10 @@
       peutAjouter
         ? '<button type="button" class="spr-btn" id="spr-btn-ajouter-date">+ Ajouter une date</button>'
         : '<div class="spr-hint">« Heures précises » n\'est pas proposé pour plusieurs dates.</div>',
-      state.datesSupp.length ? h(['<div class="spr-hint">Une réservation sur plusieurs dates est traitée en demande de devis : notre équipe valide et confirme avant toute facturation.</div>']) : '',
+      // (01/09 soir, lot D complet) — cette phrase ne peut plus annoncer « devis obligatoire » : un
+      // client identifié peut désormais payer directement plusieurs dates en ligne (le mode réel
+      // proposé, lui, est décidé étape 4 par le serveur — /options-paiement, jamais ici).
+      state.datesSupp.length ? h(['<div class="spr-hint">Sur plusieurs dates, le paiement en ligne reste possible si vous êtes identifié(e) ; sinon nous établissons un devis.</div>']) : '',
       '</div>']);
   }
 
@@ -1026,12 +1029,14 @@
 
   // ---- Étape 4 : identification + mode de paiement + coordonnées ----
   function renderStepPaiement() {
-    // (01/09, lot D court) — §8 : mode devis IMPOSÉ dès que plusieurs dates sont demandées (le
-    // serveur refuserait tout autre mode en 400, routes/tunnel.js POST /reserver). Recalculé à
-    // chaque rendu (idempotent) plutôt qu'une seule fois à la recherche, pour rester vrai même si
-    // l'utilisateur revient en arrière ajouter une date après avoir déjà choisi un autre mode.
+    // (01/09 soir, lot D complet) — §8 : SEULS 'credit_salle'/'sur_facture' restent réservés au
+    // mono-jour (confirmation/débit immédiat sur plusieurs jours à la fois n'a jamais été demandé).
+    // 'devis' et — depuis ce soir — 'en_ligne' sont acceptés en multi-dates (le serveur les accepte
+    // tous les deux, routes/tunnel.js POST /reserver ; tout autre mode y reste refusé en 400). On ne
+    // force donc PLUS `state.modePaiement = 'devis'` à chaque rendu — ça empêchait purement et
+    // simplement de sélectionner 'en_ligne' quand plusieurs dates sont demandées. Le pré-choix par
+    // défaut, lui, reste posé une seule fois par chargerOptionsPaiement() (pas ici, pas à chaque rendu).
     var multiJours = state.datesSupp.length > 0;
-    if (multiJours) { state.modePaiement = 'devis'; }
     var identifBlock;
     if (state.identifie) {
       // (31/08, §6) — même badge que renderIdentifyPrompt() (étapes 1-3), désormais partagé via
@@ -1053,23 +1058,25 @@
     // un client NON identifié (pas de lien magique résolu) ne voit QUE « Demande de devis »,
     // quoi que dise le serveur sur la disponibilité du paiement en ligne/crédit/facture — leur
     // proposer un mode que POST /reserver refusera ensuite (403, §3 du cadrage) serait un mur
-    // après coup. Un client identifié garde tous les modes, inchangé.
-    // (01/09, lot D court) — « inchangé » CI-DESSUS ne vaut que hors multi-dates : le serveur
-    // rejette tout mode ≠ 'devis' dès que plusieurs jours sont envoyés (§8), quel que soit le
-    // client. Ne proposer QUE le devis ici, jamais un choix que l'envoi refuserait ensuite (même
-    // principe que la restriction anonyme ci-dessus — « un formulaire qui propose ce qu'il refuse
-    // est pire qu'un formulaire contraint », 31/08).
-    if (state.identifie && !multiJours) {
+    // après coup. Un client identifié garde tous les modes, sous réserve de ce que dit le serveur.
+    // (01/09 soir, lot D complet) — le paiement en ligne (Stripe) est désormais proposé aussi en
+    // multi-dates : seul op.paiement_en_ligne_disponible décide (§17.14, la règle vit côté serveur,
+    // evaluerPaiementEnLigne n'exclut plus plusieurs jours). Crédit salle et facture fin de mois,
+    // EUX, restent réservés au mono-jour (§8, décision jamais rouverte : confirmer/débiter
+    // immédiatement sur plusieurs jours à la fois n'a jamais été demandé) — jamais un choix que
+    // l'envoi refuserait ensuite (« un formulaire qui propose ce qu'il refuse est pire qu'un
+    // formulaire contraint », 31/08).
+    if (state.identifie) {
       // §4.9 — Paiement en ligne par carte : proposé UNIQUEMENT si le SERVEUR le déclare possible
-      // (Stripe configuré, réservation sur un seul jour…). La règle est portée par l'endpoint
-      // /options-paiement (§17.14 : pas de règle de bascule figée côté plugin). Visible DÈS LE CHOIX.
+      // (Stripe configuré, créneau non contesté, dans les horaires…) — pour CHAQUE jour demandé.
+      // La règle est portée par l'endpoint /options-paiement (§17.14). Visible DÈS LE CHOIX.
       if (op.paiement_en_ligne_disponible) {
         options.push({ value: 'en_ligne', title: 'Paiement en ligne par carte', sub: 'Réservation confirmée immédiatement après le paiement (paiement sécurisé Stripe).' });
       }
-      if (op.credit_disponible) {
+      if (!multiJours && op.credit_disponible) {
         options.push({ value: 'credit_salle', title: 'Crédit salle', sub: 'Solde disponible : ' + op.credit_solde_heures + ' h' });
       }
-      if (op.paiement_fin_mois_disponible) {
+      if (!multiJours && op.paiement_fin_mois_disponible) {
         // (correctif 29/08 — ouverture du règlement sur facture) Le sous-texte vient TEL QUEL du
         // serveur (paiement_fin_mois_libelle, /tunnel/options-paiement — lib/creditSalle.js::
         // libelleFacturation) : même rédaction que le mail n°3, jamais réécrite ici. Repli si le
@@ -1079,19 +1086,18 @@
     }
     // §17.19 — Le POURQUOI, dès le choix. Quand le paiement en ligne n'est pas proposé, on affiche
     // TEL QUEL le message décidé par le serveur (options-paiement → paiement_en_ligne_message) :
-    // multi-jours, créneau contesté, hors-horaires, délai court (message combiné pour hors+délai).
-    // Aucune phrase codée en dur ici ; le plugin n'invente ni ne décide (§17.14). Pour le hors-horaires,
-    // on complète avec le SURCOÛT chiffré (accès autonome) fourni par regles_horaires, s'il est non nul.
+    // créneau contesté, hors-horaires, délai court (message combiné pour hors+délai). Aucune phrase
+    // codée en dur ici ; le plugin n'invente ni ne décide (§17.14). Pour le hors-horaires, on
+    // complète avec le SURCOÛT chiffré (accès autonome) fourni par regles_horaires, s'il est non nul.
     // RÉSERVÉ au client identifié (ci-dessus) : pour un nouveau client, l'absence de paiement en
     // ligne n'est pas un motif d'indisponibilité ponctuelle, c'est la politique du tunnel.
     var indispoNote = '';
-    // (01/09, lot D court) — §4 du cadrage : « expliquer, pas juste refuser » — une phrase, pas un
-    // mur, à la place du choix de paiement absent. Prioritaire sur l'explication mono-date
-    // ci-dessous (les deux ne peuvent pas être vraies en même temps : multiJours implique déjà
-    // qu'aucun autre mode n'est proposé).
-    if (multiJours) {
-      indispoNote = h(['<div class="spr-hint">Pour une réservation sur plusieurs dates, nous établissons un devis : notre équipe valide et confirme votre réservation avant toute facturation.</div>']);
-    } else if (state.identifie && !op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
+    // (01/09 soir, lot D complet) — le mur générique « multi-dates = devis obligatoire » disparaît :
+    // seul un motif RÉEL rendu par le serveur (op.paiement_en_ligne_message) explique maintenant
+    // l'absence de paiement en ligne, multi-dates ou pas. Crédit salle / facture fin de mois restent
+    // silencieusement absents en multi-dates (mêmes deux modes qu'avant, aucun mur à expliquer :
+    // seule leur ABSENCE de la liste le dit, comme pour un client non identifié).
+    if (state.identifie && !op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
       var reg = op.regles_horaires;
       var surcout = '';
       if (reg && reg.hors_horaires && reg.hors_horaires.concerne && Number(reg.hors_horaires.surcout_ht) > 0) {
@@ -1781,8 +1787,11 @@
       var espaceAvant = state.selectedEspaceId;
       var conserve = espaceAvant ? espacesCombines.filter(function (e) { return e.id === espaceAvant; })[0] : null;
       state.selectedEspaceId = conserve ? conserve.id : (espacesCombines.length ? espacesCombines[0].id : null);
-      // §8 — imposé, pas seulement par défaut : le serveur refuserait tout autre mode en 400 dès
-      // que jours.length > 1 (routes/tunnel.js POST /reserver).
+      // (01/09 soir, lot D complet) — simple valeur de DÉPART, plus un mode imposé : le paiement en
+      // ligne est désormais accepté aussi en multi-dates (routes/tunnel.js POST /reserver). Cette
+      // valeur est de toute façon réévaluée par chargerOptionsPaiement() à l'étape 4, une fois la
+      // disponibilité réelle du paiement en ligne connue — ici, avant cet appel, 'devis' reste le
+      // repli le plus sûr (toujours accepté, quel que soit l'état d'identification).
       state.modePaiement = 'devis';
       if (!conserverEtape) state.step = 2;
       render();
@@ -1847,7 +1856,8 @@
     // (01/09, lot D court) — joursRecherche() renvoie EXACTEMENT [jour] (même forme qu'avant ce
     // chantier) quand aucune date supplémentaire n'existe ; la liste complète sinon, pour que la
     // prévisualisation de majoration jour férié (§17.24) et nb_jours restent justes en multi-dates
-    // aussi (même si, en multi-dates, seul le mode 'devis' est de toute façon proposé ensuite).
+    // aussi. (01/09 soir, lot D complet) — plus « seul le mode devis est proposé ensuite » : le
+    // paiement en ligne l'est désormais aussi, cf. pré-sélection ci-dessous.
     var jours = joursRecherche();
     var nbJours = jours.length;
     api('/tunnel/options-paiement', {
@@ -1863,7 +1873,14 @@
       state.optionsPaiement = data;
       state.identifie = !!data.identifie;
       // Pré-sélection raisonnable du mode par défaut selon ce qui est réellement proposé.
-      if (data.identifie && data.credit_disponible) state.modePaiement = 'credit_salle';
+      // (01/09 soir, lot D complet) — en multi-dates, crédit salle/facture fin de mois ne sont
+      // JAMAIS proposés (cf. renderStepPaiement, !multiJours) : les présélectionner laisserait
+      // state.modePaiement sur une valeur qu'aucun radio ne porte à l'écran (rien de coché). On
+      // choisit donc parmi les seuls modes réellement offerts en multi-dates : en ligne si
+      // possible, sinon devis.
+      if (nbJours > 1) {
+        state.modePaiement = (data.identifie && data.paiement_en_ligne_disponible) ? 'en_ligne' : 'devis';
+      } else if (data.identifie && data.credit_disponible) state.modePaiement = 'credit_salle';
       else if (data.identifie && data.paiement_fin_mois_disponible) state.modePaiement = 'sur_facture';
       else state.modePaiement = 'devis';
       if (data.identifie) {
