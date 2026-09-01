@@ -73,6 +73,13 @@
     optionsPaiement: null,
     modePaiement: 'devis',
     nonRemboursable: false, // NANR (29/08) : opt-in, jamais coche par defaut
+    // (TEMPS 2, 01/09 soir) — vrai UNIQUEMENT juste apres qu'un nouveau lancement de recherche a
+    // decoche un NANR precedemment coche (jamais mis a true si la case etait deja decochee, pour
+    // ne pas afficher une bannière quand il n'y a rien a signaler). Lu une seule fois par
+    // renderStepSalle() ; remis a false des que l'utilisateur retouche la case ou relance une
+    // recherche. Sert uniquement a DIRE le decochage a l'ecran (§ piege « decochage silencieux »),
+    // jamais a la logique de calcul elle-meme.
+    nanrResetNotice: false,
     contact: { type: '', raison_sociale: '', nom: '', email: '', telephone: '', siret: '', adresse_facturation: '' },
     // (30/08, chantier SIRET dans le tunnel) — un champ, pas une deduction (§1) : contact.type
     // vaut '' tant que le client n'a rien choisi, 'professionnel' ou 'particulier' ensuite.
@@ -184,9 +191,23 @@
   // calculerTarif (lib/tarification.js) - le SERVEUR reste seul decisionnaire (une case cochee a
   // tort n'obtient jamais la remise, cf. calculerTarif) ; ce calcul ne sert qu'a ne pas proposer
   // une case que le serveur refuserait de toute facon.
+  // (TEMPS 2, 01/09 soir) — « premier jour », PAS forcement state.search.date seul : en
+  // multi-dates, POST /reserver tranche l'eligibilite de TOUTE la reservation sur le jour le PLUS
+  // TOT parmi TOUTES les dates demandees (routes/tunnel.js, dateDebutTunnel =
+  // jours.map(j=>j.date_jour).sort()[0]) — jamais sur state.search.date seul, qui n'est que « la
+  // date saisie en premier dans le formulaire », pas forcement la plus proche chronologiquement.
+  // Reprendre la meme regle ici evite que l'apercu (etape Salle) promette une remise que l'envoi
+  // refuserait ensuite. Mono-date (datesSupp vide) : resultat rigoureusement identique a avant
+  // (une seule date dans la liste) — § mono-date inchange.
+  function premierJourDemande() {
+    var dates = [state.search.date].concat(state.datesSupp.map(function (d) { return d.date; })).filter(Boolean);
+    if (!dates.length) return null;
+    return dates.slice().sort()[0];
+  }
   function joursAvantDebut() {
-    if (!state.search.date) return null;
-    var debut = new Date(state.search.date + 'T00:00:00');
+    var premier = premierJourDemande();
+    if (!premier) return null;
+    var debut = new Date(premier + 'T00:00:00');
     var auj = new Date();
     auj.setHours(0, 0, 0, 0);
     return Math.round((debut - auj) / 86400000);
@@ -803,10 +824,36 @@
     var sousTitreDate = multiJours
       ? ((1 + state.datesSupp.length) + ' dates sélectionnées')
       : formatDateFr(state.search.date);
+
+    // NANR (29/08, décision Olivier ; déplacé ÉTAPE 2 le 01/09 soir — § TEMPS 2 « propose ET
+    // chiffre » : coché ici, chaque salle ci-dessus se rafraîchit à son tarif remisé, AVANT tout
+    // engagement — le verrou reste à l'écran de confirmation, cf. renderStepRecap, avec son
+    // propre rappel « réservation non annulable »). Proposé seulement si éligible (réservation à
+    // 21 jours calendaires minimum sur le PREMIER jour demandé, cf. joursAvantDebut), jamais
+    // coché par défaut — un choix qui se présente comme un choix, pas une case à décocher. Le
+    // serveur reste seul décisionnaire (calculerTarif) ; ce conditionnement ne sert qu'à ne pas
+    // montrer une case que le serveur refuserait de toute façon.
+    var nanrHtml = '';
+    if (eligibleNonRemboursable()) {
+      nanrHtml = h(['<label class="spr-nanr-box', state.nonRemboursable ? ' spr-selected' : '', '">',
+        '<input type="checkbox" id="spr-nanr-toggle"', state.nonRemboursable ? ' checked' : '', '>',
+        '<div><div class="spr-po-title">Tarif non remboursable — -25 %</div>',
+        '<div class="spr-po-sub">Cette réservation ne sera ni remboursée ni recréditée si elle est annulée, et ne pourra plus être modifiée en ligne (nous contacter reste possible, au cas par cas).</div></div>',
+        '</label>']);
+    }
+    // (TEMPS 2, 01/09 soir) — § piège « décochage silencieux » : quand une nouvelle recherche a
+    // dû décocher un NANR déjà choisi (dates modifiées, cf. bouton Rechercher étape 1), on ne se
+    // contente pas d'afficher la case redevenue vide — on le DIT, une fois, ici même.
+    var nanrNoticeHtml = state.nanrResetNotice
+      ? h(['<div class="spr-hint spr-hint-indispo">Vos dates ont changé : le tarif non remboursable n\'est plus sélectionné — cochez-le à nouveau si vous le souhaitez toujours.</div>'])
+      : '';
+
     return identifyBanner + h(['<div class="spr-card">',
       '<div class="spr-title">Choisissez votre espace</div>',
       '<div class="spr-subtitle">', sousTitreDate, ' — chaque salle est affichée à son tarif', multiJours ? ' total' : '', '.</div>',
       repliBanner,
+      nanrHtml,
+      nanrNoticeHtml,
       roomsHtml,
       recapSel,
       '<div class="spr-actions">',
@@ -1124,18 +1171,9 @@
 
     var contactHtml = state.identifie ? '' : renderContactNouveauClient();
 
-    // NANR (29/08, décision Olivier) : proposé seulement si éligible (réservation à 21 jours
-    // calendaires minimum), jamais coché par défaut — un choix qui se présente comme un choix,
-    // pas une case à décocher. Le serveur reste seul décisionnaire (calculerTarif) ; ce
-    // conditionnement ne sert qu'à ne pas montrer une case que le serveur refuserait.
-    var nanrHtml = '';
-    if (eligibleNonRemboursable()) {
-      nanrHtml = h(['<label class="spr-nanr-box', state.nonRemboursable ? ' spr-selected' : '', '">',
-        '<input type="checkbox" id="spr-nanr-toggle"', state.nonRemboursable ? ' checked' : '', '>',
-        '<div><div class="spr-po-title">Tarif non remboursable — -25 %</div>',
-        '<div class="spr-po-sub">Cette réservation ne sera ni remboursée ni recréditée si elle est annulée, et ne pourra plus être modifiée en ligne (nous contacter reste possible, au cas par cas).</div></div>',
-        '</label>']);
-    }
+    // NANR — DÉPLACÉ à l'étape 2 (renderStepSalle) le 01/09 soir, § TEMPS 2 : proposé et chiffré
+    // dès le choix de la salle plutôt que découvert ici. state.nonRemboursable (posé là-bas) est
+    // simplement REPRIS tel quel par construirePayload() à l'envoi — rien à recalculer ici.
 
     // (30/08) SIRET déjà connu (§3) : le parcours normal (commentaire + Continuer) n'a plus lieu
     // d'être — la seule action possible est de demander le lien de connexion (panneau rendu par
@@ -1149,7 +1187,6 @@
       '<div class="spr-title">Paiement &amp; coordonnées</div>',
       identifBlock,
       '<div class="spr-payment-choice">', paymentHtml, '</div>',
-      nanrHtml,
       indispoNote,
       contactHtml,
       siretConnuBloquant ? '' : renderHorairesAnticipes(),
@@ -1349,7 +1386,13 @@
       dateLignesHtml,
       '<div class="spr-recap-line"><span>Effectif</span><span>', esc(state.search.capaciteMin), ' personnes</span></div>',
       '<div class="spr-recap-line"><span>Paiement</span><span>', modeLabels[state.modePaiement] || state.modePaiement, '</span></div>',
-      state.nonRemboursable ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable (-25%)</span></div>']) : '',
+      // (TEMPS 2, 01/09 soir) — le NANR est désormais PROPOSÉ et CHIFFRÉ dès l'étape 2 (Salle),
+      // mais le VERROU (l'engagement réel) reste ICI : c'est ce récapitulatif que
+      // « spr-btn-envoyer » envoie à doReserver(), jamais l'étape 2. Le rappel explicite
+      // « réservation non annulable » vit donc à CET écran, juste avant l'envoi — pas seulement
+      // dans la case à cocher deux étapes plus tôt, que le client a pu cocher puis oublier.
+      state.nonRemboursable ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable (-25%)</span></div>',
+        '<div class="spr-hint spr-hint-nanr">Réservation non annulable : elle ne sera ni remboursée ni recréditée, et ne pourra plus être modifiée en ligne.</div>']) : '',
       showSalleLine ? h(['<div class="spr-recap-line"><span>Salle</span><span>', salleTtc, '</span></div>']) : '',
       optionsMontant > 0 ? h(['<div class="spr-recap-line"><span>Options</span><span>', fmtMontant(optionsMontant), '</span></div>']) : '',
       renderMajorationFerie(),
@@ -1470,11 +1513,22 @@
       // Fonction nommée (pas doRecherche directement) : un handler onclick reçoit le MouseEvent en
       // 1er argument, qui atterrirait sinon dans preferCode (§1.5.0, préremplissage) — sans effet
       // réel (aucune salle ne matche jamais un événement), mais pas la peine de compter dessus.
-      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = function () { state.nonRemboursable = false; lancerRecherche(); };
+      // (TEMPS 2, 01/09 soir) — § piège « décochage silencieux » : nanrResetNotice n'est armé que
+      // si une remise ÉTAIT réellement cochée (jamais de bannière quand il n'y avait rien à
+      // perdre) ; lu une seule fois par renderStepSalle(), puis éteint dès que l'utilisateur
+      // retouche la case (toggleNonRemboursable) ou relance une nouvelle recherche.
+      if (byId('spr-btn-rechercher')) byId('spr-btn-rechercher').onclick = function () {
+        state.nanrResetNotice = state.nonRemboursable;
+        state.nonRemboursable = false;
+        lancerRecherche();
+      };
     } else if (state.step === 2) {
       document.querySelectorAll('input[name="spr-espace"]').forEach(function (r) {
         r.onchange = function (e) { state.selectedEspaceId = Number(e.target.value); render(); };
       });
+      // NANR — déplacé ici (étape 2) le 01/09 soir, § TEMPS 2 : voir renderStepSalle() pour le
+      // rendu de la case, toggleNonRemboursable() pour le re-calcul (mono ET multi-dates).
+      if (byId('spr-nanr-toggle')) byId('spr-nanr-toggle').onchange = toggleNonRemboursable;
       if (byId('spr-btn-retour1')) byId('spr-btn-retour1').onclick = function () { state.step = 1; render(); };
       if (byId('spr-btn-continuer2')) byId('spr-btn-continuer2').onclick = function () { state.step = 3; loadOptions(); };
       if (byId('spr-btn-attente')) byId('spr-btn-attente').onclick = doListeAttente;
@@ -1525,7 +1579,6 @@
       if (byId('spr-ha-avant-heure')) byId('spr-ha-avant-heure').onchange = function (e) { state.horaireAnticipe.avantHeure = e.target.value; };
       if (byId('spr-ha-apres')) byId('spr-ha-apres').onchange = function (e) { state.horaireAnticipe.apres = e.target.checked; render(); };
       if (byId('spr-ha-apres-heure')) byId('spr-ha-apres-heure').onchange = function (e) { state.horaireAnticipe.apresHeure = e.target.value; };
-      if (byId('spr-nanr-toggle')) byId('spr-nanr-toggle').onchange = toggleNonRemboursable;
       if (byId('spr-btn-retour3')) byId('spr-btn-retour3').onclick = function () { state.step = 3; render(); };
       if (byId('spr-btn-continuer4')) byId('spr-btn-continuer4').onclick = function () {
         if (!state.identifie) {
@@ -1725,7 +1778,16 @@
         + '&capacite_min=' + encodeURIComponent(s.capaciteMin) + '&unite=' + encodeURIComponent(j.unite)
         + '&duree=1&type_reservation=' + encodeURIComponent(s.typeReservation)
         + (creneau ? '&creneau=' + encodeURIComponent(creneau) : '')
-        + '&non_remboursable=0'
+        // (TEMPS 2, 01/09 soir) — CORRECTIF : ce paramètre était codé en dur à 0, quel que soit
+        // state.nonRemboursable — cocher le NANR en multi-dates n'avait donc jusqu'ici AUCUN
+        // effet sur le prix affiché (dispoActive() lit disponibiliteMulti, jamais rafraîchi par
+        // ce paramètre figé). Sûr d'envoyer state.nonRemboursable tel quel sur CHAQUE jour ici :
+        // premierJourDemande()/eligibleNonRemboursable() (voir plus haut) ne laissent la case se
+        // cocher que si le jour le PLUS TÔT de la demande est déjà à J-21 — tout autre jour de la
+        // même demande, forcément égal ou postérieur, l'est donc nécessairement aussi. Résultat
+        // par jour ici == résultat retenu par POST /reserver pour toute la réservation (même
+        // règle, cf. joursAvantDebut).
+        + '&non_remboursable=' + (state.nonRemboursable ? '1' : '0')
         + (state.token ? '&token=' + encodeURIComponent(state.token) : '');
       return api('/tunnel/disponibilite' + qs).then(function (data) { return { jour: j, data: data }; });
     });
@@ -1802,11 +1864,17 @@
     });
   }
 
-  // NANR (29/08) : re-simule la disponibilite/le tarif avec le nouveau choix, SANS changer
-  // d'etape (l'utilisateur est deja a l'etape paiement quand il coche/decoche).
+  // NANR (29/08 ; déplacé étape 2 le 01/09 soir) : re-simule la disponibilite/le tarif de TOUTES
+  // les salles listees avec le nouveau choix, SANS changer d'etape (l'utilisateur est deja a
+  // l'etape Salle quand il coche/decoche — § TEMPS 2 « propose ET chiffre »).
+  // (TEMPS 2, 01/09 soir) — CORRECTIF : cette fonction appelait TOUJOURS doRecherche() (mono-
+  // date), meme en multi-dates ; dispoActive() lit alors disponibiliteMulti (jamais rafraichi par
+  // doRecherche(), qui ecrit disponibilite) — cocher le NANR en multi-dates ne changeait donc
+  // AUCUN prix affiche. Repondre a l'etape reellement active, comme lancerRecherche().
   function toggleNonRemboursable() {
     state.nonRemboursable = !state.nonRemboursable;
-    doRecherche(null, true);
+    state.nanrResetNotice = false;
+    if (state.datesSupp.length) { doRechercheMulti(true); } else { doRecherche(null, true); }
   }
 
   function doListeAttente() {
@@ -1920,6 +1988,12 @@
         // proposée dès l'étape 1/2 (renderIdentifyPrompt), pas seulement à l'étape Paiement :
         // reprendre toujours à 4 aurait fait sauter la recherche/le choix de salle pour un client
         // qui s'identifie avant même d'avoir cherché.
+        // (TEMPS 2, 01/09 soir) — CORRECTIF : nonRemboursable manquait ici. Un client qui coche
+        // le NANR (désormais étape 2) puis clique « Déjà client ? » (proposé dès l'étape 1/2/4)
+        // le reperdait silencieusement au retour, alors que SES DATES N'ONT PAS CHANGÉ — donc
+        // rien ne justifiait de le décocher (contrairement au bouton Rechercher, qui LUI change
+        // réellement les dates). Voyage donc désormais lui aussi.
+        nonRemboursable: state.nonRemboursable,
         step: state.step, savedAt: Date.now(),
       }));
     } catch (e) { /* localStorage indisponible : tant pis, pas bloquant */ }
@@ -2309,6 +2383,11 @@
             // pas encore) reste lisible pendant la fenêtre de 2h — on repart d'un tableau vide
             // (mono-date, comportement identique à avant ce chantier) plutôt que de planter.
             datesSupp: snap.datesSupp || [],
+            // (TEMPS 2, 01/09 soir) — même filet que pauses[]/datesSupp[] ci-dessus : un snapshot
+            // posé par une version d'AVANT ce chantier n'a pas ce champ, `=== true` retombe alors
+            // sur false (comportement identique à avant : la case n'existait qu'à l'étape 4, sans
+            // notion de survie au round-trip d'identification).
+            nonRemboursable: snap.nonRemboursable === true,
           });
           // (correctif 29/08 — diagnostic du jour) CAUSE CONFIRMÉE de la remise absente au
           // retour : `state.disponibilite` était repris TEL QUEL du snapshot, or ce snapshot a

@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.8
+Stable tag: 1.9.9
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -53,6 +53,24 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 1.9.9 =
+* [space_reservation] Le tarif non remboursable (-25 %, réservation à 21 jours calendaires
+  minimum) est désormais proposé et chiffré dès le choix de la salle (étape 2), au lieu de
+  n'apparaître qu'à l'étape Paiement : cochée là, chaque salle affichée se met à jour à son
+  tarif remisé avant tout engagement. L'engagement réel (l'envoi de la demande) reste, lui,
+  au récapitulatif, qui rappelle désormais explicitement « réservation non annulable » quand
+  ce tarif est sélectionné. Un changement de dates (bouton Rechercher) décoche automatiquement
+  ce choix comme avant, mais l'écran le signale maintenant explicitement au lieu de se
+  contenter d'une case redevenue vide.
+* Correctif : sur une réservation portant sur plusieurs dates, cocher le tarif non remboursable
+  n'avait jusqu'ici aucun effet sur les prix affichés (la case demandait toujours le tarif
+  standard en coulisses). Corrigé — le tarif remisé s'applique désormais aussi en multi-dates,
+  sur la même règle d'éligibilité que l'envoi final (jour le plus tôt parmi les dates
+  demandées).
+* Correctif : un client cochant ce tarif puis s'identifiant en cours de parcours (« Déjà
+  client ? ») le reperdait au retour alors que ses dates n'avaient pas changé. Ce choix
+  voyage désormais avec le reste de la saisie en cours d'identification.
 
 = 1.9.8 =
 * [space_reservation] Lot D complet : le paiement en ligne par carte (Stripe) est désormais
