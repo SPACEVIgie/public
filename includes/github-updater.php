@@ -143,6 +143,98 @@ class SPR_GitHub_Updater {
         return $transient;
     }
 
+    /**
+     * Isole une section « == Titre == » du readme.txt embarqué (format WordPress standard),
+     * jusqu'au prochain titre de section ou la fin du fichier. Retourne '' si le readme est
+     * absent/illisible ou si la section n'existe pas — jamais de contenu inventé ici.
+     */
+    private function read_readme_section($heading) {
+        $path = plugin_dir_path($this->file) . 'readme.txt';
+        if (!is_readable($path)) {
+            return '';
+        }
+        $content = file_get_contents($path);
+        if ($content === false) {
+            return '';
+        }
+        $pattern = '/^==\s*' . preg_quote($heading, '/') . '\s*==\s*$(.*?)(?=^==\s.+?\s==\s*$|\z)/ims';
+        if (!preg_match($pattern, $content, $m)) {
+            return '';
+        }
+        return trim($m[1]);
+    }
+
+    /**
+     * Convertit le texte brut d'une section de readme.txt en HTML minimal pour la modale
+     * « Voir les détails » : `= Titre =` -> <h4>, lignes `* ...` -> <ul><li> (avec leurs
+     * lignes de continuation indentées repliées dans le même item), le reste -> <p>.
+     * Tout le texte passe par esc_html — aucune balise du readme n'est interprétée telle quelle.
+     */
+    private function readme_to_html($raw) {
+        if ($raw === '') {
+            return '';
+        }
+        $html    = '';
+        $in_list = false;
+        $item    = '';
+        $lines   = preg_split('/\r\n|\r|\n/', $raw);
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+
+            if ($trimmed === '') {
+                if ($item !== '') {
+                    $html .= '<li>' . esc_html($item) . '</li>';
+                    $item  = '';
+                }
+                if ($in_list) {
+                    $html   .= '</ul>';
+                    $in_list = false;
+                }
+                continue;
+            }
+
+            if (preg_match('/^=\s*(.+?)\s*=$/', $trimmed, $m)) {
+                if ($item !== '') {
+                    $html .= '<li>' . esc_html($item) . '</li>';
+                    $item  = '';
+                }
+                if ($in_list) {
+                    $html   .= '</ul>';
+                    $in_list = false;
+                }
+                $html .= '<h4>' . esc_html($m[1]) . '</h4>';
+                continue;
+            }
+
+            if (preg_match('/^\*\s+(.*)$/', $trimmed, $m)) {
+                if ($item !== '') {
+                    $html .= '<li>' . esc_html($item) . '</li>';
+                }
+                if (!$in_list) {
+                    $html   .= '<ul>';
+                    $in_list = true;
+                }
+                $item = $m[1];
+                continue;
+            }
+
+            // Ligne de continuation (readme.txt indente les lignes qui prolongent un item).
+            if ($in_list) {
+                $item .= ' ' . $trimmed;
+            } else {
+                $html .= '<p>' . esc_html($trimmed) . '</p>';
+            }
+        }
+        if ($item !== '') {
+            $html .= '<li>' . esc_html($item) . '</li>';
+        }
+        if ($in_list) {
+            $html .= '</ul>';
+        }
+        return $html;
+    }
+
     /** Fiche « Voir les détails » de la liste des plugins. */
     public function plugin_info($result, $action, $args) {
         if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== $this->slug) {
@@ -160,8 +252,11 @@ class SPR_GitHub_Updater {
             'homepage'      => 'https://github.com/' . $this->repo,
             'download_link' => $this->package_url($release),
             'sections'      => array(
-                'description' => 'Tunnel de réservation en ligne S-PACE Business Center — shortcode [space_reservation].',
-                'changelog'   => isset($release->body) ? nl2br(esc_html($release->body)) : '',
+                // readme.txt (embarqué dans le ZIP) reste l'unique source : rien n'est
+                // dupliqué ici. Si une section est absente/illisible, l'onglet reste vide
+                // plutôt que d'afficher un texte inventé dans le PHP.
+                'description' => $this->readme_to_html($this->read_readme_section('Description')),
+                'changelog'   => $this->readme_to_html($this->read_readme_section('Changelog')),
             ),
         );
     }
