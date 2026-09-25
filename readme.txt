@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.9.9
+Stable tag: 2.0.0
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -62,6 +62,33 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 2.0.0 =
+* [space_reservation] Code promo — le champ manquait. L'API S-RESA accepte un code promo depuis le
+  18/09 (vérification à la saisie, prix remisé, usage compté à la confirmation), mais aucun écran ne
+  permettait de le saisir : un code créé par l'équipe était inutilisable en ligne. Un champ « Code
+  promo » s'affiche désormais à l'étape 2 (choix de la salle), au même endroit que le tarif non
+  remboursable : les deux leviers de prix ensemble, au-dessus de la liste dont ils changent les
+  montants.
+* Le code est vérifié dès la saisie (bouton « Appliquer ») et rien n'est consommé à ce moment-là :
+  l'usage se compte à la confirmation, côté serveur. Un code valable rafraîchit aussitôt le prix de
+  chaque salle affichée ; le récapitulatif rappelle le code et son sort réel avant l'envoi.
+* Un code refusé est dit à l'écran, avec le motif et la marche à suivre (inconnu, pas encore
+  valable, expiré, plafond d'utilisations atteint, déjà utilisé) — jamais un refus muet, et jamais
+  un parcours interrompu : « continuez sans code » reste possible à tout moment. Un code valable
+  mais moins avantageux qu'une remise déjà acquise (fidélité, tarif négocié, tarif non
+  remboursable) est annoncé comme tel plutôt qu'affiché « appliqué » sans effet sur le prix : aucune
+  remise ne se cumule, la plus avantageuse s'applique.
+* Si le code cesse d'être valable entre la saisie et l'envoi (son dernier usage vient d'être pris
+  par quelqu'un d'autre), la demande n'est jamais confirmée en silence à un autre prix : l'écran
+  affiche le prix sans le code et propose de réserver quand même à ce prix, ou de revenir en
+  arrière. Rien n'est créé tant que ce choix n'est pas fait.
+* Le code saisi survit à une identification en cours de parcours (« Déjà client ? ») et à un
+  changement de dates (contrairement au tarif non remboursable, dont l'éligibilité dépend, elle, des
+  dates) ; il s'applique aussi à une réservation portant sur plusieurs dates. Un code réservé
+  nominativement à un client n'est reconnu qu'une fois ce client identifié.
+* Aucun changement côté serveur : le plugin n'ajoute aucune validation de son côté — il transmet le
+  code et affiche ce que l'API en dit.
 
 = 1.9.9 =
 * [space_reservation] Le tarif non remboursable (-25 %, réservation à 21 jours calendaires

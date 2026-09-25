@@ -193,6 +193,37 @@
 .spr-nanr-box .spr-po-title { font-weight: 700; font-size: 14px; }
 .spr-nanr-box .spr-po-sub { font-size: 12.5px; color: var(--spr-text-soft); margin-top: 2px; }
 
+/* CODE PROMO (25/09) — étape 2, sous le tarif non remboursable : les deux leviers de prix au même
+   endroit. Cadre pointillé de la même famille que .spr-nanr-box / .spr-identify-box (ce n'est pas
+   un choix majeur du parcours), champ + bouton sur une ligne comme .spr-identify-row. */
+.spr-code-box { border: 1px dashed var(--spr-border); border-radius: 12px; padding: 14px 16px; margin: 4px 0 16px; }
+.spr-code-title { font-weight: 700; font-size: 13.5px; margin-bottom: 2px; }
+.spr-code-sub { font-size: 12.5px; color: var(--spr-text-soft); margin-bottom: 10px; }
+.spr-code-row { display: flex; align-items: center; gap: 8px; }
+.spr-code-row input {
+  flex: 1; padding: 10px 12px; border: 1px solid var(--spr-border); border-radius: 9px;
+  font-size: 14.5px; font-family: inherit; color: var(--spr-text); background: #fff;
+  text-transform: uppercase;
+}
+.spr-code-row input:focus { outline: none; border-color: var(--spr-rose); }
+.spr-code-btn { flex-shrink: 0; }
+.spr-code-tag {
+  display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 100px;
+  background: var(--spr-ok-bg); color: var(--spr-ok); font-weight: 700; font-size: 13px;
+  letter-spacing: .04em;
+}
+/* Les trois verdicts. Même famille que .spr-annonce-remise (une remise n'est pas une action) ;
+   le refus emprunte la couleur d'alerte sans devenir un bandeau (il n'arrête pas le parcours :
+   « continuez sans code » fait partie du message). */
+.spr-code-msg { font-size: 12.5px; margin-top: 8px; }
+.spr-code-msg.spr-code-ok { color: var(--spr-ok); font-weight: 600; }
+.spr-code-msg.spr-code-note { color: var(--spr-note); }
+.spr-code-msg.spr-code-refus { color: var(--spr-alert); }
+
+/* Bandeau du refus À L'ENVOI (récapitulatif, 409 nommé) — averti, pas cassé : la couleur
+   d'avertissement existait déjà en variable, il manquait sa déclinaison de bandeau. */
+.spr-banner.spr-warn { background: var(--spr-warn-bg); color: var(--spr-warn); }
+
 /* Lien « Déjà client ? » — étape 1, au-dessus de la carte de recherche. */
 .spr-already-client { text-align: right; margin-bottom: 10px; font-size: 13px; }
 .spr-already-client a { color: var(--spr-bordeaux); font-weight: 600; text-decoration: none; }

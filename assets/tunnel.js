@@ -80,6 +80,26 @@
     // recherche. Sert uniquement a DIRE le decochage a l'ecran (§ piege « decochage silencieux »),
     // jamais a la logique de calcul elle-meme.
     nanrResetNotice: false,
+    // (25/09, SRESA-PLUGIN-CODE-PROMO) — CODE PROMO. L'API l'accepte depuis le 18/09
+    // (GET /tunnel/verifier-code, &code= sur /tunnel/disponibilite, `code`/`sans_code` sur
+    // POST /tunnel/reserver) ; aucun écran ne le saisissait. Le plugin ne VALIDE rien : il
+    // transporte le code et affiche ce que le serveur en dit — une seconde logique de validation
+    // côté navigateur finirait par mentir (dates de validité, plafond, code réservé à un client,
+    // non-cumul avec la remise fidélité).
+    //   codePromoSaisie  : ce que le client tape (survit aux render(), qui réécrivent le DOM) ;
+    //   codePromo        : le code RETENU (vérifié valide) — le seul qui voyage vers le serveur ;
+    //   codePromoVerdict : réponse de /tunnel/verifier-code telle quelle — {valide:true, code,
+    //                      libelle, note} ou {valide:false, motif, message} (message affiché TEL
+    //                      QUEL : c'est lui qui dit quoi faire) ;
+    //   codeRefusEnvoi   : 409 nommé reçu À L'ENVOI (code_refuse / code_plafond_atteint) — le code
+    //                      ne vaut plus au moment de confirmer : jamais un échec muet, un choix ;
+    //   sansCode         : le client a choisi de réserver quand même, au prix sans le code.
+    codePromoSaisie: '',
+    codePromo: null,
+    codePromoVerdict: null,
+    codePromoLoading: false,
+    codeRefusEnvoi: null,
+    sansCode: false,
     contact: { type: '', raison_sociale: '', nom: '', email: '', telephone: '', siret: '', adresse_facturation: '' },
     // (30/08, chantier SIRET dans le tunnel) — un champ, pas une deduction (§1) : contact.type
     // vaut '' tant que le client n'a rien choisi, 'professionnel' ou 'particulier' ensuite.
@@ -127,7 +147,17 @@
     return fetch(API_URL + path, Object.assign({ headers: headers, cache: 'no-store' }, opts))
       .then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (data) {
-          if (!res.ok) throw new Error(data.error || 'Erreur serveur');
+          if (!res.ok) {
+            // (25/09, code promo au plugin) — un refus NOMMÉ porte plus que `error` : motif, prix
+            // sans code, choix proposé (routes/tunnel.js, ErreurReservation.extra). Jusqu'ici seul
+            // le message survivait, impossible donc de proposer « Réserver sans le code » sans
+            // relire le corps. On accroche le statut HTTP et le corps entier à l'erreur — les
+            // appelants existants ne lisent que err.message, comportement inchangé pour eux.
+            var erreur = new Error(data.error || 'Erreur serveur');
+            erreur.status = res.status;
+            erreur.data = data;
+            throw erreur;
+          }
           return data;
         });
       });
@@ -235,6 +265,101 @@
   function renderAnnonceRemise(tarif) {
     var t = tarif !== undefined ? tarif : tarifSelection();
     return (t && !t.erreur && t.libelle_annonce) ? h(['<div class="spr-annonce-remise">', esc(t.libelle_annonce), '</div>']) : '';
+  }
+
+  // ===================== CODE PROMO (25/09, SRESA-PLUGIN-CODE-PROMO) =====================
+  // Le sort du code est TRANCHÉ PAR LE SERVEUR, à chaque calcul de tarif (lib/tarification.js
+  // calculerTarif) : `code_statut` vaut 'applique' · 'ecarte' (valable, mais une autre remise est
+  // plus avantageuse en € — aucune ne se cumule) · 'ignore_nanr' (le tarif non remboursable prime)
+  // · 'refuse' (+ code_refus.message, qui dit quoi faire) · null (aucun code transmis). Le plugin
+  // ne recalcule rien : il lit ce champ sur le tarif de la salle choisie, exactement comme il lit
+  // déjà libelle_annonce.
+  function statutCodeTarif() {
+    var t = tarifSelection();
+    return (t && !t.erreur && t.code_statut) ? t.code_statut : null;
+  }
+
+  function refusCodeTarif() {
+    var t = tarifSelection();
+    return (t && !t.erreur && t.code_refus) ? t.code_refus : null;
+  }
+
+  // Ce que le client lit une fois le code passé au calcul — une phrase par statut. Jamais un code
+  // annoncé « appliqué » quand il ne l'est pas : c'est exactement le piège que tend le non-cumul
+  // (un code parfaitement valable peut ne rien changer au prix).
+  function messageStatutCode() {
+    var statut = statutCodeTarif();
+    var t = tarifSelection();
+    var v = state.codePromoVerdict;
+    var libelle = (v && v.valide && v.libelle) ? v.libelle : null;
+    if (statut === 'applique') {
+      return { classe: 'spr-code-ok', texte: 'Code ' + state.codePromo + ' appliqué' + (libelle ? ' — ' + libelle : '') + '.' };
+    }
+    if (statut === 'ecarte') {
+      return { classe: 'spr-code-note', texte: 'Le code ' + state.codePromo + ' est valable mais n\'est pas appliqué : '
+        + ((t && t.libelle_annonce) ? t.libelle_annonce : 'une autre remise')
+        + ' est plus avantageuse en euros (aucune remise ne se cumule).' };
+    }
+    if (statut === 'ignore_nanr') {
+      return { classe: 'spr-code-note', texte: 'Le tarif non remboursable s\'applique : le code ' + state.codePromo
+        + ' n\'est pas utilisé (aucune remise ne se cumule). Décochez ce tarif pour comparer les deux.' };
+    }
+    if (statut === 'refuse') {
+      var r = refusCodeTarif();
+      return { classe: 'spr-code-refus', texte: (r && r.message) ? r.message
+        : 'Ce code n\'est pas reconnu. Vérifiez l\'orthographe, ou continuez sans code.' };
+    }
+    return null;
+  }
+
+  // Libellé COURT pour le récapitulatif — même donnée, même serveur, pas un second verdict.
+  function libelleRecapCode() {
+    if (!state.codePromo) return null;
+    var statut = statutCodeTarif();
+    if (state.sansCode) return state.codePromo + ' — non appliqué (réservé sans le code)';
+    if (statut === 'applique') return state.codePromo + ' — appliqué';
+    if (statut === 'ecarte') return state.codePromo + ' — non appliqué (remise plus avantageuse)';
+    if (statut === 'ignore_nanr') return state.codePromo + ' — non appliqué (tarif non remboursable)';
+    if (statut === 'refuse') return state.codePromo + ' — refusé';
+    return state.codePromo;
+  }
+
+  // Le champ — ÉTAPE 2, là où les prix s'affichent et où le tarif non remboursable se coche : les
+  // deux leviers de prix au même endroit, au-dessus de la liste dont ils changent les montants.
+  function renderCodePromoBox() {
+    var v = state.codePromoVerdict;
+    var msg = state.codePromo ? messageStatutCode() : null;
+    // Refus À LA SAISIE (GET /tunnel/verifier-code) : le message du serveur, TEL QUEL — il nomme le
+    // motif (inconnu, pas encore valable, expiré, plafond atteint, déjà utilisé) et dit quoi faire.
+    var refusSaisie = (v && !v.valide) ? h(['<div class="spr-code-msg spr-code-refus">', esc(v.message || ''), '</div>',
+      // Aucune fuite (décision 29/08 : un code réservé à UN AUTRE client répond « inconnu », comme
+      // un code qui n'existe pas) — cette note est la même pour tout code inconnu, elle n'apprend
+      // donc rien sur le code saisi ; elle évite juste qu'un client à qui un code a été réservé
+      // reste bloqué sur un refus qu'une identification lèverait.
+      (v.motif === 'inconnu' && !state.identifie)
+        ? '<div class="spr-code-msg spr-code-note">Si ce code vous a été communiqué personnellement, identifiez-vous (« Déjà client ? ») puis saisissez-le à nouveau.</div>'
+        : '']) : '';
+    var corps = state.codePromo
+      ? h(['<div class="spr-code-row"><span class="spr-code-tag">', esc(state.codePromo), '</span>',
+        '<button class="spr-btn spr-code-btn" id="spr-code-retirer">Retirer</button></div>',
+        msg ? h(['<div class="spr-code-msg ', msg.classe, '">', esc(msg.texte), '</div>']) : ''])
+      : h(['<div class="spr-code-row">',
+        '<input type="text" id="spr-code-input" placeholder="Votre code" autocomplete="off" value="', esc(state.codePromoSaisie), '">',
+        '<button class="spr-btn spr-code-btn" id="spr-code-appliquer"', state.codePromoLoading ? ' disabled' : '', '>',
+        state.codePromoLoading ? 'Vérification…' : 'Appliquer', '</button></div>', refusSaisie]);
+    return h(['<div class="spr-code-box">',
+      '<div class="spr-code-title">Code promo</div>',
+      '<div class="spr-code-sub">Si vous en avez un, saisissez-le : les prix ci-dessous se mettent à jour.</div>',
+      corps,
+      '</div>']);
+  }
+
+  // Le refus du code AU MOMENT D'ENVOYER (409 nommé, récapitulatif) — message du serveur tel quel :
+  // il porte le motif et le prix sans le code. Rien n'a été écrit côté serveur par la tentative.
+  function renderCodeRefusEnvoi() {
+    var r = state.codeRefusEnvoi;
+    if (!r) return '';
+    return h(['<div class="spr-banner spr-warn">', esc(r.message), ' Votre demande n\'a pas encore été envoyée.</div>']);
   }
 
   // MAJORATION JOUR FÉRIÉ (§17.24, chantier « visible côté client », 30/08 soir) — une ligne PAR
@@ -854,6 +979,7 @@
       repliBanner,
       nanrHtml,
       nanrNoticeHtml,
+      renderCodePromoBox(),
       roomsHtml,
       recapSel,
       '<div class="spr-actions">',
@@ -1393,16 +1519,28 @@
       // dans la case à cocher deux étapes plus tôt, que le client a pu cocher puis oublier.
       state.nonRemboursable ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable (-25%)</span></div>',
         '<div class="spr-hint spr-hint-nanr">Réservation non annulable : elle ne sera ni remboursée ni recréditée, et ne pourra plus être modifiée en ligne.</div>']) : '',
+      // (25/09) Code promo — dit à l'écran qu'on relit avant d'envoyer, avec son sort réel : un code
+      // saisi mais écarté par le non-cumul ne doit pas laisser croire qu'il joue sur ce prix.
+      state.codePromo ? h(['<div class="spr-recap-line"><span>Code promo</span><span>', esc(libelleRecapCode()), '</span></div>']) : '',
       showSalleLine ? h(['<div class="spr-recap-line"><span>Salle</span><span>', salleTtc, '</span></div>']) : '',
       optionsMontant > 0 ? h(['<div class="spr-recap-line"><span>Options</span><span>', fmtMontant(optionsMontant), '</span></div>']) : '',
       renderMajorationFerie(),
       montantTtc ? h(['<div class="spr-recap-line spr-recap-total"><span>Montant', enLigne ? ' à régler' : ' estimé', ' TTC</span><span>', montantTtc, '</span></div>']) : '',
       montantHt ? h(['<div class="spr-recap-line spr-recap-ht-info"><span>dont HT</span><span>', montantHt, '</span></div>']) : '',
       renderAnnonceRemise(),
+      renderCodeRefusEnvoi(),
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour4">← Retour</button>',
-      '<button class="spr-btn spr-primary" id="spr-btn-envoyer"', state.loading ? ' disabled' : '', '>',
-      state.loading ? 'Envoi…' : (enLigne ? 'Continuer vers le paiement →' : 'Envoyer ma demande'), '</button>',
+      // (25/09) Après un refus du code à la confirmation, « Envoyer ma demande » rejouerait le même
+      // refus : le bouton d'envoi cède la place au choix réel — réserver sans le code, au prix que
+      // le serveur vient d'annoncer (il est écrit sur le bouton). « ← Retour » reste offert.
+      state.codeRefusEnvoi
+        ? h(['<button class="spr-btn spr-primary" id="spr-btn-sans-code"', state.loading ? ' disabled' : '', '>',
+          state.loading ? 'Envoi…' : ('Réserver sans le code' + (state.codeRefusEnvoi.tarifSansCodeTtc != null
+            ? ' — salle à ' + Number(state.codeRefusEnvoi.tarifSansCodeTtc).toFixed(2) + ' € TTC' : '')),
+          '</button>'])
+        : h(['<button class="spr-btn spr-primary" id="spr-btn-envoyer"', state.loading ? ' disabled' : '', '>',
+          state.loading ? 'Envoi…' : (enLigne ? 'Continuer vers le paiement →' : 'Envoyer ma demande'), '</button>']),
       '</div></div>']);
   }
 
@@ -1529,6 +1667,17 @@
       // NANR — déplacé ici (étape 2) le 01/09 soir, § TEMPS 2 : voir renderStepSalle() pour le
       // rendu de la case, toggleNonRemboursable() pour le re-calcul (mono ET multi-dates).
       if (byId('spr-nanr-toggle')) byId('spr-nanr-toggle').onchange = toggleNonRemboursable;
+      // (25/09) Code promo — même écran que le tarif non remboursable. La valeur est relue sur le
+      // champ vivant au clic (cf. appliquerCodePromo) : un clic direct sur « Appliquer » sans
+      // quitter le champ ne déclenche pas forcément son onchange.
+      if (byId('spr-code-input')) {
+        byId('spr-code-input').onchange = function (e) { state.codePromoSaisie = e.target.value; };
+        byId('spr-code-input').onkeydown = function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); appliquerCodePromo(); }
+        };
+      }
+      if (byId('spr-code-appliquer')) byId('spr-code-appliquer').onclick = appliquerCodePromo;
+      if (byId('spr-code-retirer')) byId('spr-code-retirer').onclick = retirerCodePromo;
       if (byId('spr-btn-retour1')) byId('spr-btn-retour1').onclick = function () { state.step = 1; render(); };
       if (byId('spr-btn-continuer2')) byId('spr-btn-continuer2').onclick = function () { state.step = 3; loadOptions(); };
       if (byId('spr-btn-attente')) byId('spr-btn-attente').onclick = doListeAttente;
@@ -1622,6 +1771,8 @@
     } else if (state.step === 5) {
       if (byId('spr-btn-retour4')) byId('spr-btn-retour4').onclick = function () { state.step = 4; render(); };
       if (byId('spr-btn-envoyer')) byId('spr-btn-envoyer').onclick = doReserver;
+      // (25/09) Code promo refusé à la confirmation : le choix « réserver sans le code ».
+      if (byId('spr-btn-sans-code')) byId('spr-btn-sans-code').onclick = reserverSansCode;
     } else if (state.step === 7) {
       if (byId('spr-btn-retour-pay')) byId('spr-btn-retour-pay').onclick = function () {
         // Retour au récap : on repart proprement (le PaymentIntent créé reste en attente côté Stripe,
@@ -1670,6 +1821,11 @@
       + (creneau ? '&creneau=' + encodeURIComponent(creneau) : '')
       + (estHeure ? '&heure_debut=' + encodeURIComponent(s.heureDebut) + '&heure_fin=' + encodeURIComponent(s.heureFin) : '')
       + '&non_remboursable=' + (state.nonRemboursable ? '1' : '0')
+      // (25/09) Code promo — le paramètre que /tunnel/disponibilite accepte DÉJÀ (18/09, aucun
+      // appelant jusqu'ici). C'est le serveur qui applique, écarte ou refuse : chaque salle listée
+      // revient à son prix remisé (e.tarif) avec son `code_statut`. Rien n'est transmis tant que la
+      // saisie n'a pas été vérifiée valide (state.codePromo reste null).
+      + (state.codePromo ? '&code=' + encodeURIComponent(state.codePromo) : '')
       // (1.7.2) Le token d'identification voyage desormais jusqu'a /tunnel/disponibilite — meme
       // convention que /client/moi?token= — pour qu'un client deja identifie voie la remise qui
       // s'applique DES cet ecran, au lieu de decouvrir un prix different au recapitulatif.
@@ -1788,6 +1944,9 @@
         // par jour ici == résultat retenu par POST /reserver pour toute la réservation (même
         // règle, cf. joursAvantDebut).
         + '&non_remboursable=' + (state.nonRemboursable ? '1' : '0')
+        // (25/09) Code promo — sur CHAQUE date, comme non_remboursable juste au-dessus : le même
+        // code s'applique à toute la demande (POST /reserver le revérifie une fois pour toutes).
+        + (state.codePromo ? '&code=' + encodeURIComponent(state.codePromo) : '')
         + (state.token ? '&token=' + encodeURIComponent(state.token) : '');
       return api('/tunnel/disponibilite' + qs).then(function (data) { return { jour: j, data: data }; });
     });
@@ -1808,6 +1967,10 @@
         var premier = null;
         var htBrut = 0, reduction = 0, htNet = 0, ttc = 0, tvaPct = 20;
         var surclasse = false, libelleAnnonce = null, erreur = null;
+        // (25/09) Le sort du code voyage comme libelle_annonce : ce tarif-ci est RECONSTRUIT ici
+        // (somme des dates), il ne vient pas tel quel du serveur — sans ces deux champs, l'écran ne
+        // pourrait rien dire du code en multi-dates.
+        var codeStatut = null, codeRefus = null;
         resultats.forEach(function (r) {
           var e = r.data.espaces.filter(function (x) { return x.id === id; })[0];
           if (!e) return;
@@ -1821,6 +1984,12 @@
             ttc += Number(e.tarif.tarif_ttc) || 0;
             tvaPct = e.tarif.tva_pct;
             if (e.tarif.libelle_annonce) libelleAnnonce = e.tarif.libelle_annonce;
+            // Un refus l'emporte sur tout le reste (il vaut pour toutes les dates : mêmes dates de
+            // validité, même plafond) ; sinon le premier statut rencontré. La VÉRITÉ reste POST
+            // /reserver, qui revérifie le code pour toute la demande AVANT d'écrire.
+            if (e.tarif.code_statut === 'refuse') codeStatut = 'refuse';
+            else if (!codeStatut) codeStatut = e.tarif.code_statut || null;
+            if (e.tarif.code_refus && !codeRefus) codeRefus = e.tarif.code_refus;
           }
         });
         return {
@@ -1830,6 +1999,7 @@
             tarif_ht_brut: round2(htBrut), montant_reduction_total: round2(reduction),
             tarif_ht_net: round2(htNet), tva_pct: tvaPct, tarif_ttc: round2(ttc),
             libelle_annonce: libelleAnnonce,
+            code_statut: codeStatut, code_refus: codeRefus,
           },
         };
       });
@@ -1875,6 +2045,73 @@
     state.nonRemboursable = !state.nonRemboursable;
     state.nanrResetNotice = false;
     if (state.datesSupp.length) { doRechercheMulti(true); } else { doRecherche(null, true); }
+  }
+
+  // (25/09) Rejoue la recherche de l'étape ACTIVE (mono ou multi-dates), sans changer d'écran —
+  // même choix que toggleNonRemboursable ci-dessus, et pour la même raison : c'est le serveur qui
+  // rechiffre les salles, jamais un calcul local.
+  function relancerRechercheCode() {
+    return state.datesSupp.length ? doRechercheMulti(true) : doRecherche(null, true);
+  }
+
+  // « Appliquer » — DEUX temps, et pas un de plus :
+  //  ① GET /tunnel/verifier-code : le verdict nommé, tout de suite, SANS RIEN CONSOMMER (l'usage se
+  //     compte à la confirmation, côté serveur, lib/tarification.js::consommerCodeReduction) ;
+  //  ② si le code vaut quelque chose : on REJOUE la recherche avec &code= — ce sont les prix DU
+  //     SERVEUR qui changent. C'est aussi ce second appel qui dit si le code est réellement
+  //     APPLIQUÉ ou ÉCARTÉ par le non-cumul, ce que la vérification à la saisie ne peut pas savoir.
+  function appliquerCodePromo() {
+    var champ = document.getElementById('spr-code-input');
+    var saisie = ((champ ? champ.value : state.codePromoSaisie) || '').trim();
+    state.codePromoSaisie = saisie;
+    if (!saisie) {
+      state.codePromoVerdict = { valide: false, motif: 'vide', message: 'Merci de saisir un code, ou continuez sans code.' };
+      render();
+      return Promise.resolve();
+    }
+    state.codePromoLoading = true;
+    state.error = null;
+    render();
+    return api('/tunnel/verifier-code?code=' + encodeURIComponent(saisie)
+      + (state.token ? '&token=' + encodeURIComponent(state.token) : ''))
+      .then(function (v) {
+        state.codePromoLoading = false;
+        state.codePromoVerdict = v;
+        var avait = state.codePromo;
+        // Le serveur renvoie le code tel qu'il est EN BASE (casse comprise) : on garde le sien.
+        state.codePromo = v.valide ? (v.code || saisie.toUpperCase()) : null;
+        state.codePromoSaisie = v.valide ? '' : saisie;
+        state.sansCode = false;
+        state.codeRefusEnvoi = null;
+        // Rejouer seulement s'il y a un code à faire entrer, ou un code à faire sortir des prix.
+        if (state.codePromo || avait) return relancerRechercheCode();
+        render();
+        return undefined;
+      })
+      .catch(function (err) {
+        state.codePromoLoading = false;
+        state.codePromoVerdict = null;
+        state.error = err.message;
+        render();
+      });
+  }
+
+  function retirerCodePromo() {
+    state.codePromo = null;
+    state.codePromoSaisie = '';
+    state.codePromoVerdict = null;
+    state.sansCode = false;
+    state.codeRefusEnvoi = null;
+    return relancerRechercheCode();
+  }
+
+  // « Réserver sans le code » — le code ne valait plus au moment de confirmer (409 nommé). On
+  // renvoie LA MÊME demande avec sans_code:true : le serveur écarte le code et confirme au prix
+  // qu'il vient d'annoncer. La tentative refusée n'a rien écrit.
+  function reserverSansCode() {
+    state.sansCode = true;
+    state.codeRefusEnvoi = null;
+    doReserver();
   }
 
   function doListeAttente() {
@@ -1994,6 +2231,13 @@
         // rien ne justifiait de le décocher (contrairement au bouton Rechercher, qui LUI change
         // réellement les dates). Voyage donc désormais lui aussi.
         nonRemboursable: state.nonRemboursable,
+        // (25/09) Code promo — même motif que nonRemboursable juste au-dessus : un client qui saisit
+        // un code puis clique « Déjà client ? » ne doit pas le reperdre, ses dates n'ayant pas
+        // changé. Le verdict voyage avec (il porte le libellé affiché et le refus éventuel). Ni
+        // `sansCode` ni `codeRefusEnvoi` ne voyagent : un refus d'envoi en cours n'a aucun sens au
+        // retour, et le serveur le réévaluera de toute façon au prochain envoi.
+        codePromo: state.codePromo, codePromoSaisie: state.codePromoSaisie,
+        codePromoVerdict: state.codePromoVerdict,
         step: state.step, savedAt: Date.now(),
       }));
     } catch (e) { /* localStorage indisponible : tant pis, pas bloquant */ }
@@ -2168,6 +2412,13 @@
       duree: computeDuree(),
       mode_paiement: state.modePaiement,
       non_remboursable: state.nonRemboursable ? 1 : 0,
+      // (25/09) Code promo — `code` tel qu'il a été vérifié à la saisie ; `sans_code:true` seulement
+      // quand le client a explicitement choisi de réserver sans lui après un refus à la
+      // confirmation (routes/tunnel.js : sans_code:true écarte le code, le reste de la demande est
+      // rigoureusement identique). Le serveur revérifie AVANT d'écrire et compte l'usage lui-même —
+      // le plugin ne décide rien, ne compte rien.
+      code: state.codePromo || undefined,
+      sans_code: state.sansCode ? true : undefined,
       // (30/08 soir) — la demande d'horaires anticipes voyage DANS le commentaire (aucune colonne
       // sresa_jours touchee par ce parcours) : elle atteint l'equipe via le meme canal deja lu au
       // mail de notification (notificationEquipeTunnel.js), sans creer un second mecanisme.
@@ -2229,6 +2480,23 @@
         render();
       }).catch(function (err) {
         state.loading = false;
+        // (25/09) Code promo refusé AU MOMENT DE CONFIRMER — 409 nommé : motif 'code_refuse' (le
+        // code ne vaut plus : expiré, désactivé, plafond) ou 'code_plafond_atteint' (quelqu'un
+        // d'autre a pris le dernier usage entre la saisie et l'envoi). RIEN n'a été écrit côté
+        // serveur. Ce n'est pas une erreur muette : on montre le message du serveur (il dit le prix
+        // sans le code) et on propose le vrai choix — réserver sans le code, ou revenir en arrière.
+        var extra = err.data || {};
+        if (err.status === 409 && (extra.motif === 'code_refuse' || extra.motif === 'code_plafond_atteint')) {
+          state.codeRefusEnvoi = {
+            motif: extra.motif,
+            message: err.message,
+            tarifSansCodeTtc: (extra.tarif_sans_code && extra.tarif_sans_code.tarif_ttc != null)
+              ? Number(extra.tarif_sans_code.tarif_ttc) : null,
+          };
+          state.error = null;
+          render();
+          return;
+        }
         state.error = err.message;
         render();
       });
@@ -2388,6 +2656,14 @@
             // sur false (comportement identique à avant : la case n'existait qu'à l'étape 4, sans
             // notion de survie au round-trip d'identification).
             nonRemboursable: snap.nonRemboursable === true,
+            // (25/09) Même filet que les champs ci-dessus : un snapshot posé par une version
+            // d'AVANT ce chantier ne porte pas ces champs — on repart sans code (comportement
+            // identique à avant, aucun code n'existait). La recherche rejouée juste en dessous
+            // emporte le code restauré ET le token désormais connu : un code réservé à ce client,
+            // refusé tant qu'il était anonyme, est alors reconnu.
+            codePromo: snap.codePromo || null,
+            codePromoSaisie: snap.codePromoSaisie || '',
+            codePromoVerdict: snap.codePromoVerdict || null,
           });
           // (correctif 29/08 — diagnostic du jour) CAUSE CONFIRMÉE de la remise absente au
           // retour : `state.disponibilite` était repris TEL QUEL du snapshot, or ce snapshot a
