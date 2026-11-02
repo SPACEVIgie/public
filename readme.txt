@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.0.0
+Stable tag: 2.0.1
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -62,6 +62,22 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 2.0.1 =
+* [space_reservation] Tarif non remboursable — l'écran disait « Non remboursable (-25 %) » et
+  « Réservation non annulable » même quand le serveur avait REFUSÉ ce tarif (par exemple une
+  réservation à moins de 21 jours vue depuis un autre fuseau horaire). Le prix affiché, lui, était
+  bien le prix standard : la réservation était créée au tarif normal, le client n'était pas lésé,
+  mais l'écran lui promettait une remise et un engagement qu'il n'avait pas. Le récapitulatif
+  n'annonce désormais le tarif non remboursable que si le serveur l'a accordé ; sinon il le dit
+  sobrement (« Le tarif non remboursable n'est pas disponible pour ces dates. ») et la demande
+  d'envoi ne le réclame plus.
+* Le pourcentage de remise affiché est désormais celui que le serveur renvoie, et non plus « 25 »
+  écrit dans le plugin : changer le réglage côté équipe ne fait plus mentir l'écran. Tant que le
+  pourcentage n'est pas connu (case pas encore cochée), le libellé n'annonce aucun chiffre plutôt
+  qu'un chiffre périmé.
+* Ces deux corrections valent aussi en multi-dates, où le plugin reconstruit lui-même le tarif
+  total : le verdict du serveur et le pourcentage y sont désormais reportés.
 
 = 2.0.0 =
 * [space_reservation] Code promo — le champ manquait. L'API S-RESA accepte un code promo depuis le

@@ -267,6 +267,49 @@
     return (t && !t.erreur && t.libelle_annonce) ? h(['<div class="spr-annonce-remise">', esc(t.libelle_annonce), '</div>']) : '';
   }
 
+  // (02/11, `1.622`) NANR — LE SERVEUR TRANCHE, exactement comme `code_statut` plus bas : le
+  // plugin ne rejoue pas le J-21 pour DÉCIDER, il lit le verdict rendu avec le prix.
+  // calculerTarif (lib/tarification.js:646) renvoie `non_remboursable_eligible` à TROIS états :
+  //   true  — demandé ET accordé (le prix rendu PORTE la remise) ;
+  //   false — demandé et REFUSÉ (le prix rendu est le prix STANDARD) ;
+  //   null  — aucune demande n'a voyagé (`&non_remboursable=0`) : rien à dire.
+  // `undefined` est un QUATRIÈME cas, qui n'est pas un verdict : une réponse qui ne porte pas le
+  // champ (API antérieure au 29/08, réponse en cache). On n'affirme alors RIEN — ni remise, ni
+  // « non annulable » — et l'envoi ne demande pas le NANR : l'écran et l'envoi disent la même
+  // chose, faute de quoi le client s'engagerait sur ce qu'il n'a pas lu.
+  // ⚠️ `code_statut === 'ignore_nanr'` n'est PAS un refus : c'est le signe que le NANR S'APPLIQUE
+  // et qu'il écarte le code promo (lib/tarification.js:640). Le lire comme un refus inverserait
+  // exactement le défaut qu'on ferme ici.
+  function nanrAccordeParServeur() {
+    var t = tarifSelection();
+    return !!(t && !t.erreur && t.non_remboursable_eligible === true);
+  }
+  function nanrRefuseParServeur() {
+    var t = tarifSelection();
+    return !!(t && !t.erreur && t.non_remboursable_eligible === false);
+  }
+
+  // (02/11, `1.623`) Le pourcentage VIENT DU SERVEUR (`remise_non_remboursable_pct`, qui porte le
+  // réglage `sresa_remise_non_remboursable_pct`) — jamais un chiffre écrit ici, qui mentirait le
+  // jour où Olivier change le réglage. Il vaut 0 tant que le NANR n'est pas appliqué : le serveur
+  // ne lit le réglage QU'À L'INTÉRIEUR de `if (nonRembApplicable)` (lib/tarification.js:614-618).
+  // 0 et absent se lisent donc tous deux « inconnu », et le libellé n'énonce alors AUCUN chiffre
+  // plutôt qu'un chiffre périmé.
+  function pctNonRemboursable() {
+    var t = tarifSelection();
+    var p = (t && !t.erreur) ? Number(t.remise_non_remboursable_pct) : NaN;
+    return (isFinite(p) && p > 0) ? p : null;
+  }
+
+  // Le refus, DIT une fois, sobrement — là où le client vient de le provoquer (la case, étape 2)
+  // et là où il relit avant d'envoyer (le récapitulatif). Même classe que la bannière de
+  // décochage juste à côté : aucun style neuf.
+  function renderNanrRefusHtml() {
+    return nanrRefuseParServeur()
+      ? h(['<div class="spr-hint spr-hint-indispo">Le tarif non remboursable n\'est pas disponible pour ces dates.</div>'])
+      : '';
+  }
+
   // ===================== CODE PROMO (25/09, SRESA-PLUGIN-CODE-PROMO) =====================
   // Le sort du code est TRANCHÉ PAR LE SERVEUR, à chaque calcul de tarif (lib/tarification.js
   // calculerTarif) : `code_statut` vaut 'applique' · 'ecarte' (valable, mais une autre remise est
@@ -960,9 +1003,13 @@
     // montrer une case que le serveur refuserait de toute façon.
     var nanrHtml = '';
     if (eligibleNonRemboursable()) {
+      // (02/11, `1.623`) Le pourcentage est celui du SERVEUR, et il n'est connu qu'une fois le
+      // NANR accordé : à l'ouverture de cet écran (case non cochée) le serveur renvoie 0, donc
+      // le titre ne chiffre rien ; il se chiffre dès que la case cochée revient accordée.
+      var pctNanr = pctNonRemboursable();
       nanrHtml = h(['<label class="spr-nanr-box', state.nonRemboursable ? ' spr-selected' : '', '">',
         '<input type="checkbox" id="spr-nanr-toggle"', state.nonRemboursable ? ' checked' : '', '>',
-        '<div><div class="spr-po-title">Tarif non remboursable — -25 %</div>',
+        '<div><div class="spr-po-title">Tarif non remboursable', pctNanr != null ? ' — -' + pctNanr + ' %' : '', '</div>',
         '<div class="spr-po-sub">Cette réservation ne sera ni remboursée ni recréditée si elle est annulée, et ne pourra plus être modifiée en ligne (nous contacter reste possible, au cas par cas).</div></div>',
         '</label>']);
     }
@@ -978,6 +1025,7 @@
       '<div class="spr-subtitle">', sousTitreDate, ' — chaque salle est affichée à son tarif', multiJours ? ' total' : '', '.</div>',
       repliBanner,
       nanrHtml,
+      renderNanrRefusHtml(),
       nanrNoticeHtml,
       renderCodePromoBox(),
       roomsHtml,
@@ -1517,8 +1565,14 @@
       // « spr-btn-envoyer » envoie à doReserver(), jamais l'étape 2. Le rappel explicite
       // « réservation non annulable » vit donc à CET écran, juste avant l'envoi — pas seulement
       // dans la case à cocher deux étapes plus tôt, que le client a pu cocher puis oublier.
-      state.nonRemboursable ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable (-25%)</span></div>',
-        '<div class="spr-hint spr-hint-nanr">Réservation non annulable : elle ne sera ni remboursée ni recréditée, et ne pourra plus être modifiée en ligne.</div>']) : '',
+      // (02/11, `1.622`) Ce que le SERVEUR a accordé, pas ce que la case dit : `state.nonRemboursable`
+      // seul affichait « Non remboursable » et « Réservation non annulable » alors que le prix juste
+      // en dessous était le prix STANDARD — l'écran promettait un engagement et une remise que la
+      // réservation n'aurait pas eus. Refusé : on le DIT, à la place, sans rien promettre.
+      // (`1.623`) Le pourcentage vient du même tarif ; absent ou 0, la ligne ne chiffre pas.
+      nanrAccordeParServeur() ? h(['<div class="spr-recap-line"><span>Tarif</span><span>Non remboursable', pctNonRemboursable() != null ? ' (-' + pctNonRemboursable() + '%)' : '', '</span></div>',
+        '<div class="spr-hint spr-hint-nanr">Réservation non annulable : elle ne sera ni remboursée ni recréditée, et ne pourra plus être modifiée en ligne.</div>'])
+        : renderNanrRefusHtml(),
       // (25/09) Code promo — dit à l'écran qu'on relit avant d'envoyer, avec son sort réel : un code
       // saisi mais écarté par le non-cumul ne doit pas laisser croire qu'il joue sur ce prix.
       state.codePromo ? h(['<div class="spr-recap-line"><span>Code promo</span><span>', esc(libelleRecapCode()), '</span></div>']) : '',
@@ -1971,6 +2025,15 @@
         // (somme des dates), il ne vient pas tel quel du serveur — sans ces deux champs, l'écran ne
         // pourrait rien dire du code en multi-dates.
         var codeStatut = null, codeRefus = null;
+        // (02/11, `1.622`/`1.623`) Même motif, et même raison, que `code_statut` juste au-dessus :
+        // ce tarif-ci est RECONSTRUIT ici, il ne vient pas tel quel du serveur. Sans ces deux
+        // champs, l'écran ne pourrait rien dire du tarif non remboursable en multi-dates — et le
+        // récapitulatif, qui lit désormais le verdict, n'afficherait plus RIEN même accordé.
+        // `nanrEligible` : un refus l'emporte. Le serveur tranche toute la demande sur le jour le
+        // PLUS TÔT (routes/tunnel.js, dateDebutTunnel), qui est le plus contraignant — une date
+        // refusée ici signifie donc que le jour le plus tôt l'est aussi. `undefined` (champ absent)
+        // n'est pas un verdict et ne doit pas se laisser écraser par un `null`.
+        var nanrEligible, nanrPct = 0;
         resultats.forEach(function (r) {
           var e = r.data.espaces.filter(function (x) { return x.id === id; })[0];
           if (!e) return;
@@ -1990,6 +2053,13 @@
             if (e.tarif.code_statut === 'refuse') codeStatut = 'refuse';
             else if (!codeStatut) codeStatut = e.tarif.code_statut || null;
             if (e.tarif.code_refus && !codeRefus) codeRefus = e.tarif.code_refus;
+            if (e.tarif.non_remboursable_eligible === false) nanrEligible = false;
+            else if (nanrEligible === undefined && 'non_remboursable_eligible' in e.tarif) {
+              nanrEligible = e.tarif.non_remboursable_eligible;
+            }
+            if (!nanrPct && Number(e.tarif.remise_non_remboursable_pct) > 0) {
+              nanrPct = Number(e.tarif.remise_non_remboursable_pct);
+            }
           }
         });
         return {
@@ -2000,6 +2070,8 @@
             tarif_ht_net: round2(htNet), tva_pct: tvaPct, tarif_ttc: round2(ttc),
             libelle_annonce: libelleAnnonce,
             code_statut: codeStatut, code_refus: codeRefus,
+            non_remboursable_eligible: nanrEligible,
+            remise_non_remboursable_pct: nanrPct,
           },
         };
       });
@@ -2411,7 +2483,12 @@
       unite: s.unite,
       duree: computeDuree(),
       mode_paiement: state.modePaiement,
-      non_remboursable: state.nonRemboursable ? 1 : 0,
+      // (02/11, `1.622`) On envoie CE QU'ON A AFFICHÉ. Le serveur refusait déjà une demande non
+      // éligible (calculerTarif : `nonRembApplicable = demandé && eligible`), donc retirer ici une
+      // demande refusée ne change aucun prix : ça aligne l'envoi sur l'écran. La DEMANDE continue
+      // de voyager telle quelle vers /tunnel/disponibilite (`&non_remboursable=`, plus haut) —
+      // sans elle le serveur ne trancherait jamais, et il n'y aurait plus de verdict à lire.
+      non_remboursable: nanrAccordeParServeur() ? 1 : 0,
       // (25/09) Code promo — `code` tel qu'il a été vérifié à la saisie ; `sans_code:true` seulement
       // quand le client a explicitement choisi de réserver sans lui après un refus à la
       // confirmation (routes/tunnel.js : sans_code:true écarte le code, le reste de la demande est
