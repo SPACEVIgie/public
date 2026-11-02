@@ -22,6 +22,12 @@
   // le lien qui la ramene n'a de toute facon plus aucun sens.
   var SNAPSHOT_TTL_MS = 2 * 60 * 60 * 1000;
   var STRIPE_JS = 'https://js.stripe.com/v3/';
+  // (02/11, `1.624`) CGPS — l'adresse du texte que le client accepte. C'est la MEME que celle que
+  // l'API renvoie dans `cgps_url` quand elle refuse (routes/sresa/tunnel.js, motif
+  // 'cgps_non_acceptees') : deux ecritures d'une seule adresse, a garder alignees. Ce n'est
+  // volontairement PAS un reglage du plugin — le lien doit mener au texte que le serveur nomme,
+  // jamais a une page choisie installation par installation.
+  var CGPS_URL = 'https://s-pace.fr/conditions-generales-de-prestations-de-services/';
 
   var root = document.getElementById('space-reservation-app');
   if (!root) return;
@@ -100,6 +106,18 @@
     codePromoLoading: false,
     codeRefusEnvoi: null,
     sansCode: false,
+    // (02/11, `1.624`, decision d'Olivier du 02/11) CGPS — l'acceptation est un GESTE, jamais un
+    // etat par defaut : `false` au depart, et aucune reservation ne part sans elle (doReserver).
+    // Elle ne voyage PAS dans la sauvegarde localStorage (saveSnapshot en porte la liste
+    // explicite, plus bas) : une acceptation restauree par le navigateur serait une case cochee
+    // que personne n'a cochee — exactement la preuve fabriquee que l'API refuse de fabriquer.
+    //   cgpsAcceptees : ce que le client a coche a l'ecran de recapitulatif ;
+    //   cgpsManquante : il a clique « Envoyer » sans cocher — on le DIT, et rien ne part ;
+    //   cgpsRefus     : la phrase de l'API recue en 422 `cgps_non_acceptees`, affichee TELLE
+    //                   QUELLE (c'est le serveur qui dit ce qui lui manque, pas le plugin).
+    cgpsAcceptees: false,
+    cgpsManquante: false,
+    cgpsRefus: null,
     contact: { type: '', raison_sociale: '', nom: '', email: '', telephone: '', siret: '', adresse_facturation: '' },
     // (30/08, chantier SIRET dans le tunnel) — un champ, pas une deduction (§1) : contact.type
     // vaut '' tant que le client n'a rien choisi, 'professionnel' ou 'particulier' ensuite.
@@ -1009,16 +1027,36 @@
       var pctNanr = pctNonRemboursable();
       nanrHtml = h(['<label class="spr-nanr-box', state.nonRemboursable ? ' spr-selected' : '', '">',
         '<input type="checkbox" id="spr-nanr-toggle"', state.nonRemboursable ? ' checked' : '', '>',
-        '<div><div class="spr-po-title">Tarif non remboursable', pctNanr != null ? ' — -' + pctNanr + ' %' : '', '</div>',
-        '<div class="spr-po-sub">Cette réservation ne sera ni remboursée ni recréditée si elle est annulée, et ne pourra plus être modifiée en ligne (nous contacter reste possible, au cas par cas).</div></div>',
+        // (02/11, ajout d'Olivier au brief `1.624`) Le libelle disait « si elle est annulée »
+        // quand le recapitulatif, lui, dit « non annulable » : l'un laissait croire qu'annuler
+        // reste possible (avec des consequences), l'autre que non. Le titre porte desormais les
+        // DEUX refus, et le texte dit la CONTREPARTIE — la remise — que l'ancien taisait : une
+        // case qui n'enonce que ce qu'on perd ne dit pas ce qu'on achete.
+        // ⚠️ AUCUN CHIFFRE dans le texte : le pourcentage est un reglage du serveur
+        // (`sresa_remise_non_remboursable_pct`), et le suffixe « — -N % » du titre le porte deja,
+        // rendu par le serveur apres cochage (`1.623`). L'ecrire ici le ferait mentir au premier
+        // changement de reglage.
+        '<div><div class="spr-po-title">Tarif non annulable et non remboursable', pctNanr != null ? ' — -' + pctNanr + ' %' : '', '</div>',
+        '<div class="spr-po-sub">En contrepartie, vous bénéficiez d\'une remise sur le prix, affichée dès que vous cochez la case. Cette réservation ne pourra être ni annulée, ni remboursée, ni recréditée, ni modifiée en ligne (nous contacter reste possible, au cas par cas).</div></div>',
         '</label>']);
     }
     // (TEMPS 2, 01/09 soir) — § piège « décochage silencieux » : quand une nouvelle recherche a
     // dû décocher un NANR déjà choisi (dates modifiées, cf. bouton Rechercher étape 1), on ne se
     // contente pas d'afficher la case redevenue vide — on le DIT, une fois, ici même.
-    var nanrNoticeHtml = state.nanrResetNotice
-      ? h(['<div class="spr-hint spr-hint-indispo">Vos dates ont changé : le tarif non remboursable n\'est plus sélectionné — cochez-le à nouveau si vous le souhaitez toujours.</div>'])
-      : '';
+    // (02/11, ajout d'Olivier au brief `1.624`) « cochez-le a nouveau si vous le souhaitez
+    // toujours » est un CONSEIL : il n'est vrai que si la case est encore proposee a la nouvelle
+    // date. Quand elle ne l'est plus (eligibleNonRemboursable() faux : moins de 21 jours sur le
+    // premier jour demande), ce message envoyait le client chercher une case qui n'existe plus a
+    // l'ecran. On DIT alors pourquoi, au lieu de conseiller l'impossible. Meme condition, mot pour
+    // mot, que celle qui decide d'afficher la case (nanrHtml ci-dessus) : les deux ne peuvent pas
+    // diverger d'un cote et de l'autre.
+    // Le message vient de v1.9.9 (59c0be3), pas des correctifs `1.622`/`1.623` du 02/11.
+    var nanrNoticeHtml = '';
+    if (state.nanrResetNotice) {
+      nanrNoticeHtml = eligibleNonRemboursable()
+        ? h(['<div class="spr-hint spr-hint-indispo">Vos dates ont changé : le tarif non remboursable n\'est plus sélectionné — cochez-le à nouveau si vous le souhaitez toujours.</div>'])
+        : h(['<div class="spr-hint spr-hint-indispo">Vos dates ont changé : le tarif non remboursable n\'est pas disponible pour ces dates.</div>']);
+    }
 
     return identifyBanner + h(['<div class="spr-card">',
       '<div class="spr-title">Choisissez votre espace</div>',
@@ -1509,6 +1547,53 @@
       '</div>']);
   }
 
+  // ===================== CGPS (02/11, `1.624`) =====================
+  // UNE SEULE case, pour la reservation ENTIERE (jamais une par date), a l'ecran qui precede
+  // l'envoi : le recapitulatif est le seul passage oblige des QUATRE fins de parcours (devis,
+  // credit salle, facture fin de mois, paiement en ligne). Ses deux boutons — « Envoyer ma
+  // demande » / « Continuer vers le paiement » et « Reserver sans le code » — menent tous les
+  // deux a doReserver(), seul appelant de POST /tunnel/reserver : c'est pourquoi le verrou vit
+  // dans doReserver() et non sur un bouton (cf. la garde la-bas).
+  // Le libelle ne DIT PAS ce que les CGPS contiennent (non remboursable, annulation, delai) : le
+  // texte juridique vit a son adresse, et le resumer ici creerait une seconde version a tenir.
+  // Cadre de la meme famille que la case du tarif non remboursable (.spr-nanr-box) : aucun style
+  // neuf, et la meme grammaire visuelle pour les deux seules cases a cocher du parcours.
+  // ⚠️ La boite est un <div>, pas un <label> comme .spr-nanr-box : un lien a l'interieur d'un
+  // <label> ferait basculer la case EN MEME TEMPS qu'il ouvre l'onglet. Le <label for=…> ne
+  // couvre donc que les mots, et le lien reste un lien.
+  function renderCgpsBox() {
+    // Le lien s'ouvre dans un nouvel onglet : le parcours en cours — et tout ce qui a ete saisi —
+    // survit a la lecture du texte. `rel="noopener noreferrer"` va avec `target="_blank"`.
+    var lien = h(['<a href="', esc(CGPS_URL), '" target="_blank" rel="noopener noreferrer">',
+      'conditions générales de prestations de services</a>']);
+    // Le refus DU SERVEUR prime sur le rappel local : s'il a parle, c'est sa phrase qui compte.
+    var messageHtml = '';
+    if (state.cgpsRefus) {
+      messageHtml = h(['<div class="spr-hint spr-hint-indispo">', esc(state.cgpsRefus), '</div>']);
+    } else if (state.cgpsManquante) {
+      messageHtml = h(['<div class="spr-hint spr-hint-indispo">Merci d\'accepter les conditions ',
+        'générales de prestations de services pour envoyer votre demande.</div>']);
+    }
+    return h(['<div class="spr-nanr-box', state.cgpsAcceptees ? ' spr-selected' : '', '">',
+      '<input type="checkbox" id="spr-cgps-toggle"', state.cgpsAcceptees ? ' checked' : '', '>',
+      '<div><div class="spr-po-title">',
+      '<label for="spr-cgps-toggle">J\'ai lu et j\'accepte les </label>', lien,
+      '</div></div>',
+      '</div>', messageHtml]);
+  }
+
+  // Le focus se replace APRES render(), qui reecrit tout le DOM : l'element d'avant n'existe
+  // plus. focus() amene lui-meme la case dans la vue, sans second mecanisme de defilement.
+  // ⚠️ PAS `byId` ICI. `byId` est une variable LOCALE de bindEvents() (plus bas dans ce fichier),
+  // et le fichier le dit deja : « byId n'existe qu'a l'interieur de bindEvents() ». Appele depuis
+  // le module, il levait un ReferenceError — le focus ne se posait JAMAIS, et l'erreur sortait du
+  // gestionnaire de clic sans rien casser d'autre a l'ecran, puisque render() avait deja eu lieu.
+  // Un defaut entierement silencieux, que seule une assertion lisant document.activeElement a vu.
+  function focusCgps() {
+    var el = document.getElementById('spr-cgps-toggle');
+    if (el && el.focus) el.focus();
+  }
+
   // ---- Étape 5 : récapitulatif ----
   function renderStepRecap() {
     var multiJours = state.datesSupp.length > 0;
@@ -1583,6 +1668,12 @@
       montantHt ? h(['<div class="spr-recap-line spr-recap-ht-info"><span>dont HT</span><span>', montantHt, '</span></div>']) : '',
       renderAnnonceRemise(),
       renderCodeRefusEnvoi(),
+      // (02/11, `1.624`) La case CGPS, juste au-dessus des boutons : c'est ici que le client
+      // valide, et une case lue deux etapes plus tot est une case oubliee — meme raison que le
+      // rappel « reservation non annulable » quelques lignes au-dessus. Posee SANS condition :
+      // tout parcours du tunnel passe par cet ecran, quel que soit le mode de reglement, le
+      // nombre de dates, et que le client soit identifie ou non.
+      renderCgpsBox(),
       '<div class="spr-actions">',
       '<button class="spr-btn" id="spr-btn-retour4">← Retour</button>',
       // (25/09) Après un refus du code à la confirmation, « Envoyer ma demande » rejouerait le même
@@ -1827,6 +1918,15 @@
       if (byId('spr-btn-envoyer')) byId('spr-btn-envoyer').onclick = doReserver;
       // (25/09) Code promo refusé à la confirmation : le choix « réserver sans le code ».
       if (byId('spr-btn-sans-code')) byId('spr-btn-sans-code').onclick = reserverSansCode;
+      // (02/11, `1.624`) La case CGPS. On repasse par render() (comme la case du tarif non
+      // remboursable) : le cadre doit suivre l'etat coche, et le rappel « merci d'accepter… »
+      // disparaitre des que c'est fait. Cocher efface aussi un refus du serveur deja affiche —
+      // le prochain envoi portera le booleen, ce refus-la n'a plus cours.
+      if (byId('spr-cgps-toggle')) byId('spr-cgps-toggle').onchange = function (e) {
+        state.cgpsAcceptees = !!e.target.checked;
+        if (state.cgpsAcceptees) { state.cgpsManquante = false; state.cgpsRefus = null; }
+        render();
+      };
     } else if (state.step === 7) {
       if (byId('spr-btn-retour-pay')) byId('spr-btn-retour-pay').onclick = function () {
         // Retour au récap : on repart proprement (le PaymentIntent créé reste en attente côté Stripe,
@@ -2489,6 +2589,13 @@
       // de voyager telle quelle vers /tunnel/disponibilite (`&non_remboursable=`, plus haut) —
       // sans elle le serveur ne trancherait jamais, et il n'y aurait plus de verdict à lire.
       non_remboursable: nanrAccordeParServeur() ? 1 : 0,
+      // (02/11, `1.624`) CGPS — un BOOLEEN, et seulement `true`. L'API est fail-closed sur la
+      // VALEUR (routes/sresa/tunnel.js : `cgps_acceptees === true`) : la chaine 'true', le nombre
+      // 1, 'oui' ou un objet y sont refuses comme « non accepte » — c'est par la qu'une preuve se
+      // fabriquerait sans que personne n'ait rien coche. `undefined` est retire par
+      // JSON.stringify, donc le champ est ABSENT quand la case n'est pas cochee : jamais `false`,
+      // qui donnerait a lire un refus explicite du client la ou il n'y a eu aucun geste.
+      cgps_acceptees: state.cgpsAcceptees ? true : undefined,
       // (25/09) Code promo — `code` tel qu'il a été vérifié à la saisie ; `sans_code:true` seulement
       // quand le client a explicitement choisi de réserver sans lui après un refus à la
       // confirmation (routes/tunnel.js : sans_code:true écarte le code, le reste de la demande est
@@ -2519,6 +2626,24 @@
   }
 
   function doReserver() {
+    // (02/11, `1.624`) LE VERROU D'ECRAN, ICI ET NULLE PART AILLEURS. doReserver() est le SEUL
+    // appelant de POST /tunnel/reserver, et ses deux declencheurs y passent tous les deux
+    // (« Envoyer ma demande »/« Continuer vers le paiement » et « Reserver sans le code ») : la
+    // garde posee ici les couvre par construction, aucun site d'envoi ne peut la manquer — c'est
+    // la lecon du NANR, ou l'oubli d'un site faisait disparaitre une information sans bruit.
+    // Le bouton n'est PAS `disabled` : un bouton eteint ne recoit aucun clic, donc n'explique
+    // rien. Il reste cliquable et DIT pourquoi il ne part pas.
+    // ⚠️ Tant que l'API est en mode tolerant (reglage `sresa_cgps_obligatoires` a false, son
+    // etat de depart), cet ecran est la SEULE barriere : une reservation qui partirait sans le
+    // champ serait creee sans preuve, en silence.
+    if (!state.cgpsAcceptees) {
+      state.cgpsManquante = true;
+      state.cgpsRefus = null;
+      state.loading = false;
+      render();
+      focusCgps();
+      return;
+    }
     state.loading = true;
     state.error = null;
     render();
@@ -2563,6 +2688,23 @@
         // serveur. Ce n'est pas une erreur muette : on montre le message du serveur (il dit le prix
         // sans le code) et on propose le vrai choix — réserver sans le code, ou revenir en arrière.
         var extra = err.data || {};
+        // (02/11, `1.624`) CGPS refusees PAR LE SERVEUR — motif `cgps_non_acceptees`. On lit le
+        // MOTIF, pas le code HTTP (422 aujourd'hui ; le motif, lui, est stable). Ce refus tombe
+        // AVANT `pool.connect()` cote API, donc avant la moindre ligne ecrite et avant le moindre
+        // appel Stripe : rien n'est cree, rien n'est facture, il n'y a aucun etat a moitie valide
+        // a defaire. On ne garde PAS la case cochee : le serveur vient de dire qu'aucune
+        // acceptation ne lui est parvenue, et un ecran qui l'affiche acceptee pendant qu'il dit
+        // l'inverse mentirait a l'un des deux. On montre SA phrase (jamais une des notres
+        // par-dessus) et on ramene le client sur la case.
+        if (extra.motif === 'cgps_non_acceptees') {
+          state.cgpsAcceptees = false;
+          state.cgpsManquante = false;
+          state.cgpsRefus = err.message;
+          state.error = null;
+          render();
+          focusCgps();
+          return;
+        }
         if (err.status === 409 && (extra.motif === 'code_refuse' || extra.motif === 'code_plafond_atteint')) {
           state.codeRefusEnvoi = {
             motif: extra.motif,

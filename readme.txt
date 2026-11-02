@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.0.1
+Stable tag: 2.0.2
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -62,6 +62,31 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 2.0.2 =
+* [space_reservation] Conditions générales de prestations de services — le récapitulatif porte
+  désormais une case « J'ai lu et j'accepte les conditions générales de prestations de services »,
+  avec le lien vers le texte (il s'ouvre dans un nouvel onglet : le parcours en cours et tout ce
+  qui a été saisi sont conservés). Une seule case pour la réservation entière, quel que soit le
+  nombre de dates, le mode de règlement (devis, crédit salle, facture fin de mois, paiement en
+  ligne) et que le client soit identifié ou non.
+* Tant qu'elle n'est pas cochée, le bouton d'envoi ne part pas et dit pourquoi : rien n'est créé,
+  rien n'est facturé. Une fois cochée, l'acceptation voyage vers l'API S-RESA, qui l'enregistre
+  avec son instant et la version du texte en vigueur. Si l'API la refuse, c'est sa phrase qui
+  s'affiche et le client est ramené sur la case — jamais un refus muet.
+* [space_reservation] Tarif non remboursable — la case s'intitule désormais « Tarif non annulable
+  et non remboursable » (le pourcentage de remise s'y ajoute toujours, dès le cochage) et son
+  texte dit la contrepartie : « En contrepartie, vous bénéficiez d'une remise sur le prix,
+  affichée dès que vous cochez la case. Cette réservation ne pourra être ni annulée, ni
+  remboursée, ni recréditée, ni modifiée en ligne (nous contacter reste possible, au cas par
+  cas). » L'ancien texte parlait d'une réservation « annulée » là où le récapitulatif annonce
+  « non annulable », et ne disait pas qu'une remise était accordée en échange.
+* [space_reservation] Correctif : après un changement de dates qui désélectionne le tarif non
+  remboursable, le message conseillait « cochez-le à nouveau si vous le souhaitez toujours » même
+  quand la nouvelle date n'y donne plus droit — la case ayant disparu de l'écran, le conseil
+  envoyait chercher ce qui n'existait plus. Dans ce cas, le message dit maintenant « Vos dates ont
+  changé : le tarif non remboursable n'est pas disponible pour ces dates. » Quand la case reste
+  proposée, le texte est inchangé.
 
 = 2.0.1 =
 * [space_reservation] Tarif non remboursable — l'écran disait « Non remboursable (-25 %) » et
