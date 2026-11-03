@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.0.2
+Stable tag: 2.0.3
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -62,6 +62,22 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 2.0.3 =
+* [space_reservation] Paiement par carte ouvert aux nouveaux clients — jusqu'ici, un visiteur qui
+  n'était pas identifié ne voyait qu'un seul mode de règlement, « Demande de devis », même quand
+  le paiement en ligne était possible pour le créneau choisi. Il voit désormais aussi « Paiement
+  en ligne par carte » et peut confirmer sa réservation immédiatement, sans attendre un devis.
+  C'est le serveur qui décide de la disponibilité (Stripe configuré, créneau non contesté, dans
+  les horaires d'ouverture, délai suffisant), exactement comme pour un client identifié.
+* Le crédit salle et la facture fin de mois restent réservés aux locataires : ils n'apparaissent
+  pas pour un visiteur non identifié, qui n'y a pas droit.
+* La carte est proposée, jamais pré-cochée : le parcours s'ouvre toujours sur « Demande de devis »,
+  et le choix reste celui du client.
+* Quand le paiement en ligne n'est pas disponible pour les dates demandées, un visiteur non
+  identifié voit maintenant le motif rendu par le serveur (créneau déjà demandé par quelqu'un
+  d'autre, hors horaires d'ouverture, délai trop court) au lieu de voir l'option simplement
+  absente, sans explication.
 
 = 2.0.2 =
 * [space_reservation] Conditions générales de prestations de services — le récapitulatif porte

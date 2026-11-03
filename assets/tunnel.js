@@ -1313,25 +1313,39 @@
 
     var op = state.optionsPaiement || {};
     var options = [{ value: 'devis', title: 'Demande de devis', sub: 'Nous vous recontactons pour finaliser votre réservation.' }];
-    // (30/08, chantier SIRET dans le tunnel) — « Un nouveau client NE RÉSERVE PAS EN LIGNE » :
-    // un client NON identifié (pas de lien magique résolu) ne voit QUE « Demande de devis »,
-    // quoi que dise le serveur sur la disponibilité du paiement en ligne/crédit/facture — leur
-    // proposer un mode que POST /reserver refusera ensuite (403, §3 du cadrage) serait un mur
-    // après coup. Un client identifié garde tous les modes, sous réserve de ce que dit le serveur.
-    // (01/09 soir, lot D complet) — le paiement en ligne (Stripe) est désormais proposé aussi en
-    // multi-dates : seul op.paiement_en_ligne_disponible décide (§17.14, la règle vit côté serveur,
-    // evaluerPaiementEnLigne n'exclut plus plusieurs jours). Crédit salle et facture fin de mois,
-    // EUX, restent réservés au mono-jour (§8, décision jamais rouverte : confirmer/débiter
-    // immédiatement sur plusieurs jours à la fois n'a jamais été demandé) — jamais un choix que
-    // l'envoi refuserait ensuite (« un formulaire qui propose ce qu'il refuse est pire qu'un
-    // formulaire contraint », 31/08).
+    // (03/11/2026, PLUGIN-TUNNEL-EN-LIGNE-ANONYME, décision d'Olivier du 03/11) — LE PAIEMENT
+    // PAR CARTE EST PROPOSÉ À UN VISITEUR NON IDENTIFIÉ. Du 30/08 au 03/11 il ne voyait QUE
+    // « Demande de devis » : le chantier « SIRET dans le tunnel » venait d'ouvrir la création de
+    // tiers depuis le tunnel et a refusé d'y brancher un encaissement immédiat le jour même. Le
+    // serveur a posé le mur (`4f6737d`, POST /reserver) et CE BLOC a posé le masque qui
+    // l'accompagnait (`b34bc90`, v1.9.0), le même jour : deux moitiés d'UNE décision. Elles
+    // tombent ensemble — le mur serveur est levé pour `en_ligne` SEUL (liste blanche
+    // MODES_PAIEMENT_SANS_COMPTE, routes/tunnel.js, 03/11), donc le masque le suit pour
+    // `en_ligne` SEUL.
+    // ⭐ CE QUI DÉCIDE N'EST PLUS L'IDENTIFICATION, C'EST LE SERVEUR :
+    // op.paiement_en_ligne_disponible (Stripe configuré, créneau non contesté, dans les
+    // horaires, délai suffisant), rendu par /options-paiement aux DEUX branches, anonyme
+    // comprise. Le plugin ne décide de rien : il affiche ce que dit le serveur (§17.14).
+    // 🔴 POURQUOI SCINDER LE `if` ET NON RETIRER SA CONDITION : crédit salle et facture fin
+    // de mois restent refusés par le serveur en 403 `nouveau_client` à qui n'a pas de compte.
+    // Les laisser apparaître serait un mur après coup — « un formulaire qui propose ce qu'il
+    // refuse est pire qu'un formulaire contraint » (31/08). Ils RESTENT donc dans la branche
+    // identifiée, et tout mode ajouté plus tard y naîtra par défaut : jamais une ouverture
+    // en silence (même raison que la liste blanche côté serveur, jamais une négation).
+    // (01/09 soir, lot D complet) — ces deux modes restent EN PLUS réservés au mono-jour (§8,
+    // décision jamais rouverte : confirmer/débiter immédiatement sur plusieurs jours à la fois
+    // n'a jamais été demandé). `devis` et `en_ligne`, eux, sont acceptés en multi-dates.
+    if (op.paiement_en_ligne_disponible) {
+      // §4.9 — proposé UNIQUEMENT si le SERVEUR le déclare possible, pour CHAQUE jour demandé.
+      // Visible DÈS LE CHOIX, et pour TOUT LE MONDE depuis la 2.0.3. ⚠ La carte est PROPOSÉE,
+      // jamais PRÉ-COCHÉE : la pré-sélection de chargerOptionsPaiement() garde son
+      // `data.identifie &&` (décision d'Olivier du 03/11 — pré-cocher la carte à un visiteur qui
+      // n'a jamais traité avec S-PACE serait agressif, et c'est la pré-sélection qui transforme
+      // une hésitation en panier abandonné). Un anonyme arrive donc sur « Demande de devis »,
+      // voit la carte, et la choisit lui-même.
+      options.push({ value: 'en_ligne', title: 'Paiement en ligne par carte', sub: 'Réservation confirmée immédiatement après le paiement (paiement sécurisé Stripe).' });
+    }
     if (state.identifie) {
-      // §4.9 — Paiement en ligne par carte : proposé UNIQUEMENT si le SERVEUR le déclare possible
-      // (Stripe configuré, créneau non contesté, dans les horaires…) — pour CHAQUE jour demandé.
-      // La règle est portée par l'endpoint /options-paiement (§17.14). Visible DÈS LE CHOIX.
-      if (op.paiement_en_ligne_disponible) {
-        options.push({ value: 'en_ligne', title: 'Paiement en ligne par carte', sub: 'Réservation confirmée immédiatement après le paiement (paiement sécurisé Stripe).' });
-      }
       if (!multiJours && op.credit_disponible) {
         options.push({ value: 'credit_salle', title: 'Crédit salle', sub: 'Solde disponible : ' + op.credit_solde_heures + ' h' });
       }
@@ -1348,15 +1362,22 @@
     // créneau contesté, hors-horaires, délai court (message combiné pour hors+délai). Aucune phrase
     // codée en dur ici ; le plugin n'invente ni ne décide (§17.14). Pour le hors-horaires, on
     // complète avec le SURCOÛT chiffré (accès autonome) fourni par regles_horaires, s'il est non nul.
-    // RÉSERVÉ au client identifié (ci-dessus) : pour un nouveau client, l'absence de paiement en
-    // ligne n'est pas un motif d'indisponibilité ponctuelle, c'est la politique du tunnel.
+    // (03/11/2026, PLUGIN-TUNNEL-EN-LIGNE-ANONYME) — CETTE NOTE N'EST PLUS RÉSERVÉE AU CLIENT
+    // IDENTIFIÉ. Elle l'était jusqu'au 03/11, et la raison écrite ici était que « pour un
+    // nouveau client, l'absence de paiement en ligne n'est pas un motif d'indisponibilité
+    // ponctuelle, c'est la politique du tunnel » : cette phrase est devenue FAUSSE le jour où
+    // la carte s'est ouverte aux visiteurs sans compte. 🔴 Sans ce retrait, un visiteur dont
+    // le créneau est contesté (ou hors horaires, ou trop proche) verrait la carte simplement
+    // ABSENTE, sans un mot — le mur muet que le tunnel s'interdit. Et il y a bien un POURQUOI
+    // à afficher : le serveur rend `paiement_en_ligne_message` (et `regles_horaires`) aux DEUX
+    // branches, anonyme comprise — pelPayload, routes/tunnel.js, « renvoyé aux DEUX branches ».
     var indispoNote = '';
     // (01/09 soir, lot D complet) — le mur générique « multi-dates = devis obligatoire » disparaît :
     // seul un motif RÉEL rendu par le serveur (op.paiement_en_ligne_message) explique maintenant
     // l'absence de paiement en ligne, multi-dates ou pas. Crédit salle / facture fin de mois restent
     // silencieusement absents en multi-dates (mêmes deux modes qu'avant, aucun mur à expliquer :
     // seule leur ABSENCE de la liste le dit, comme pour un client non identifié).
-    if (state.identifie && !op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
+    if (!op.paiement_en_ligne_disponible && op.paiement_en_ligne_message) {
       var reg = op.regles_horaires;
       var surcout = '';
       if (reg && reg.hors_horaires && reg.hors_horaires.concerne && Number(reg.hors_horaires.surcout_ht) > 0) {
