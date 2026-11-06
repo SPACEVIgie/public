@@ -27,7 +27,28 @@
   // 'cgps_non_acceptees') : deux ecritures d'une seule adresse, a garder alignees. Ce n'est
   // volontairement PAS un reglage du plugin — le lien doit mener au texte que le serveur nomme,
   // jamais a une page choisie installation par installation.
-  var CGPS_URL = 'https://s-pace.fr/conditions-generales-de-prestations-de-services/';
+  // (05/11/2026, 2.0.4, SRESA-CGPS-REFERENTIEL) CE N'EST PLUS L'ADRESSE : C'EST LE REPLI.
+  // Le serveur sert desormais `cgps { url_page, version, titre }` dans `GET /tunnel/creneaux`,
+  // que ce plugin charge DEJA a l'initialisation (`state.config`). `cgpsUrl()` ci-dessous lit
+  // donc le serveur quand il a parle, et retombe ici sinon.
+  // 🔴 CE REPLI RESTE, ET CE N'EST PAS DE LA PRUDENCE DE TROP. Le champ `cgps` vaut `null`
+  // quand la table n'est pas encore posee, quand elle est illisible, ou quand aucune version
+  // n'est connue — trois etats NORMAUX. Un plugin qui jetterait son repli le jour ou le
+  // serveur sert la valeur casserait le jour ou il ne la sert plus, et la case du parcours
+  // renverrait alors vers `undefined`.
+  var CGPS_URL_REPLI = 'https://s-pace.fr/conditions-generales-de-prestations-de-services/';
+
+  // L'ordre de preference, et il est voulu :
+  //   1. ce que le serveur a dit EN REFUSANT (le `cgps_url` du 422) — c'est l'adresse la plus
+  //      a jour qu'on puisse avoir, et c'est celle du texte que le serveur reproche de ne pas
+  //      avoir accepte. Elle n'existe qu'apres un refus, et elle prime a cet instant ;
+  //   2. le bloc `cgps` de la grille, lu a l'initialisation ;
+  //   3. le repli en dur.
+  function cgpsUrl() {
+    if (state.cgpsUrlServeur) return state.cgpsUrlServeur;
+    var c = state.config && state.config.cgps;
+    return (c && c.url_page) ? c.url_page : CGPS_URL_REPLI;
+  }
 
   var root = document.getElementById('space-reservation-app');
   if (!root) return;
@@ -118,6 +139,10 @@
     cgpsAcceptees: false,
     cgpsManquante: false,
     cgpsRefus: null,
+    //   cgpsUrlServeur : l'adresse que l'API a donnee dans le `cgps_url` de son 422. Le
+    //                    plugin 2.0.3 la recevait DEJA et ne la lisait PAS : il ne gardait
+    //                    que `err.message`. (05/11/2026, 2.0.4)
+    cgpsUrlServeur: null,
     contact: { type: '', raison_sociale: '', nom: '', email: '', telephone: '', siret: '', adresse_facturation: '' },
     // (30/08, chantier SIRET dans le tunnel) — un champ, pas une deduction (§1) : contact.type
     // vaut '' tant que le client n'a rien choisi, 'professionnel' ou 'particulier' ensuite.
@@ -1585,7 +1610,7 @@
   function renderCgpsBox() {
     // Le lien s'ouvre dans un nouvel onglet : le parcours en cours — et tout ce qui a ete saisi —
     // survit a la lecture du texte. `rel="noopener noreferrer"` va avec `target="_blank"`.
-    var lien = h(['<a href="', esc(CGPS_URL), '" target="_blank" rel="noopener noreferrer">',
+    var lien = h(['<a href="', esc(cgpsUrl()), '" target="_blank" rel="noopener noreferrer">',
       'conditions générales de prestations de services</a>']);
     // Le refus DU SERVEUR prime sur le rappel local : s'il a parle, c'est sa phrase qui compte.
     var messageHtml = '';
@@ -2721,6 +2746,13 @@
           state.cgpsAcceptees = false;
           state.cgpsManquante = false;
           state.cgpsRefus = err.message;
+          // (05/11/2026, 2.0.4) Le serveur DONNE l'adresse du texte dans son refus
+          // (`cgps_url`), et depuis le 05/11 elle vient de son referentiel. La 2.0.3 la
+          // recevait et la jetait. On la garde pour le re-rendu qui suit immediatement : le
+          // client est ramene sur la case, et la case doit pointer la ou le serveur dit.
+          // ⚠️ `|| null` et non `|| CGPS_URL_REPLI` : `cgpsUrl()` a deja son repli, et en
+          // mettre un second ici figerait l'ancienne adresse par-dessus celle de la grille.
+          state.cgpsUrlServeur = extra.cgps_url || null;
           state.error = null;
           render();
           focusCgps();
