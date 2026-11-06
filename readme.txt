@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.0.3
+Stable tag: 2.0.4
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -62,6 +62,19 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 2.0.4 =
+* [space_reservation] Le lien vers les conditions générales de prestations de services n'est plus
+  écrit dans l'extension : il vient du serveur, qui nomme le texte en vigueur. Changer l'adresse
+  de la page des conditions ne demande donc plus une mise à jour de l'extension. Le visiteur voit
+  la même case et le même libellé qu'avant — c'est la destination du lien qui cesse d'être figée.
+* Quand l'API refuse la réservation parce que les conditions n'ont pas été acceptées, le lien
+  affiché avec son message pointe désormais vers le texte que le serveur nomme dans ce refus.
+  Jusqu'ici cette adresse était reçue puis ignorée, et le lien restait celui écrit dans
+  l'extension.
+* L'adresse écrite dans l'extension est conservée comme repli : tant que le serveur ne nomme aucun
+  texte (référentiel pas encore en service, illisible, ou aucune version connue), le lien reste
+  exactement celui d'avant. Aucun écran n'est modifié, aucun réglage n'est ajouté.
 
 = 2.0.3 =
 * [space_reservation] Paiement par carte ouvert aux nouveaux clients — jusqu'ici, un visiteur qui
