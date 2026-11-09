@@ -260,7 +260,7 @@
     return d.espaces.filter(function (e) { return e.id === id; })[0] || null;
   }
 
-  // NANR (29/08, decision Olivier) : miroir cote client de l'eligibilite J-21 controlee par
+  // NANR (29/08, decision Olivier) : miroir cote client de l'eligibilite controlee par
   // calculerTarif (lib/tarification.js) - le SERVEUR reste seul decisionnaire (une case cochee a
   // tort n'obtient jamais la remise, cf. calculerTarif) ; ce calcul ne sert qu'a ne pas proposer
   // une case que le serveur refuserait de toute facon.
@@ -285,9 +285,25 @@
     auj.setHours(0, 0, 0, 0);
     return Math.round((debut - auj) / 86400000);
   }
+  // (09/11/2026, 2.0.5, PLUGIN-2.0.5) LE DELAI VIENT DU SERVEUR, ET IL N'A QU'UN SEUL REPLI.
+  // Le serveur sert `regles.nanr.delai_min_jours` dans `GET /tunnel/creneaux` depuis le 05/11
+  // (`routes/tunnel.js`, bloc `regles`), ou il expose sa constante `NANR_DELAI_MIN_JOURS`
+  // (`lib/tarification.js:462`). Jusqu'ici ce plugin REECRIVAIT ce nombre : changer la borne
+  // cote serveur laissait l'ecran proposer -- ou refuser -- la case au mauvais jour.
+  // 🔴 LE REPLI EST ECRIT UNE FOIS, ICI, ET NULLE PART AILLEURS. Deux ecritures du meme 21,
+  // c'est deux occasions qu'il diverge -- la lecon est celle de `NANR_REMISE_PCT_DEFAUT`, qui
+  // etait ecrit trois fois cote serveur avant le 05/11.
+  // ⚠️ `Number(null)` et `Number('')` valent 0, pas NaN : c'est la borne `>= 1` qui les attrape,
+  // pas `isFinite`. Et `Math.floor(d) === d` refuse un 2.5 -- un demi-jour n'est pas un delai.
+  var NANR_DELAI_MIN_JOURS_REPLI = 21;
+  function nanrDelaiMinJours() {
+    var r = state.config && state.config.regles && state.config.regles.nanr;
+    var d = r ? Number(r.delai_min_jours) : NaN;
+    return (isFinite(d) && Math.floor(d) === d && d >= 1) ? d : NANR_DELAI_MIN_JOURS_REPLI;
+  }
   function eligibleNonRemboursable() {
     var j = joursAvantDebut();
-    return j != null && j >= 21;
+    return j != null && j >= nanrDelaiMinJours();
   }
 
   // Tarif de la salle choisie (repli sur le tarif global informatif si la salle n'en porte pas).
@@ -342,6 +358,30 @@
     var t = tarifSelection();
     var p = (t && !t.erreur) ? Number(t.remise_non_remboursable_pct) : NaN;
     return (isFinite(p) && p > 0) ? p : null;
+  }
+
+  // (09/11/2026, 2.0.5, PLUGIN-2.0.5) LA REMISE, CHIFFREE AVANT LE COCHAGE.
+  // Le defaut que ferme ce lot : `pctNonRemboursable()` ci-dessus lit le tarif, et le serveur ne
+  // lit son reglage QU'A L'INTERIEUR de `if (nonRembApplicable)` (`lib/tarification.js:614-618`).
+  // Avant tout cochage il rend donc 0, le titre ne chiffrait RIEN, et le client devait cocher
+  // une case « non annulable » pour apprendre ce qu'il achetait en echange.
+  // Le serveur sert ce pourcentage AVANT la case, dans `regles.nanr.remise_pct` (05/11) : c'est
+  // ce que cette fonction lit.
+  // 🔴 ET C'EST LE TARIF QUI PRIME, PAS LA GRILLE. La grille dit « la remise en vigueur », le
+  // tarif dit « la remise que CETTE demande a obtenue » -- un ecran qui annoncerait 25 quand le
+  // prix rendu porte 30 mentirait sur le prix affiche juste a cote. ⭐ Entre un reglage et un
+  // montant calcule, c'est toujours le calcul qui a le dernier mot.
+  // ⚠️ AUCUN CHIFFRE EN DUR, A AUCUN MOMENT (c'est le defaut `1.623`) : hors plage, le titre
+  // n'enonce rien plutot qu'un chiffre faux. `> 100` est refuse comme `<= 0` -- une remise de
+  // 150 % n'est pas une remise.
+  function pctNanrReglage() {
+    var r = state.config && state.config.regles && state.config.regles.nanr;
+    var p = r ? Number(r.remise_pct) : NaN;
+    return (isFinite(p) && p > 0 && p <= 100) ? p : null;
+  }
+  function pctNanrAffiche() {
+    var duTarif = pctNonRemboursable();
+    return duTarif != null ? duTarif : pctNanrReglage();
   }
 
   // Le refus, DIT une fois, sobrement — là où le client vient de le provoquer (la case, étape 2)
@@ -1040,16 +1080,19 @@
     // chiffre » : coché ici, chaque salle ci-dessus se rafraîchit à son tarif remisé, AVANT tout
     // engagement — le verrou reste à l'écran de confirmation, cf. renderStepRecap, avec son
     // propre rappel « réservation non annulable »). Proposé seulement si éligible (réservation à
-    // 21 jours calendaires minimum sur le PREMIER jour demandé, cf. joursAvantDebut), jamais
+    // au délai minimum servi par le serveur sur le PREMIER jour demandé, cf. joursAvantDebut
+    // et nanrDelaiMinJours), jamais
     // coché par défaut — un choix qui se présente comme un choix, pas une case à décocher. Le
     // serveur reste seul décisionnaire (calculerTarif) ; ce conditionnement ne sert qu'à ne pas
     // montrer une case que le serveur refuserait de toute façon.
     var nanrHtml = '';
     if (eligibleNonRemboursable()) {
-      // (02/11, `1.623`) Le pourcentage est celui du SERVEUR, et il n'est connu qu'une fois le
-      // NANR accordé : à l'ouverture de cet écran (case non cochée) le serveur renvoie 0, donc
-      // le titre ne chiffre rien ; il se chiffre dès que la case cochée revient accordée.
-      var pctNanr = pctNonRemboursable();
+      // (02/11, `1.623`) Le pourcentage est celui du SERVEUR, et jamais un chiffre ecrit ici.
+      // (09/11/2026, 2.0.5) IL EST DESORMAIS CONNU AVANT LE COCHAGE : `pctNanrAffiche()` lit le
+      // tarif quand il porte un verdict, et sinon la grille (`regles.nanr.remise_pct`). A
+      // l'ouverture de cet ecran, le titre CHIFFRE donc la remise au lieu de se taire -- une case
+      // qui ne dit que ce qu'on perd ne dit pas ce qu'on achete.
+      var pctNanr = pctNanrAffiche();
       nanrHtml = h(['<label class="spr-nanr-box', state.nonRemboursable ? ' spr-selected' : '', '">',
         '<input type="checkbox" id="spr-nanr-toggle"', state.nonRemboursable ? ' checked' : '', '>',
         // (02/11, ajout d'Olivier au brief `1.624`) Le libelle disait « si elle est annulée »
@@ -1070,7 +1113,7 @@
     // contente pas d'afficher la case redevenue vide — on le DIT, une fois, ici même.
     // (02/11, ajout d'Olivier au brief `1.624`) « cochez-le a nouveau si vous le souhaitez
     // toujours » est un CONSEIL : il n'est vrai que si la case est encore proposee a la nouvelle
-    // date. Quand elle ne l'est plus (eligibleNonRemboursable() faux : moins de 21 jours sur le
+    // date. Quand elle ne l'est plus (eligibleNonRemboursable() faux : delai trop court sur le
     // premier jour demande), ce message envoyait le client chercher une case qui n'existe plus a
     // l'ecran. On DIT alors pourquoi, au lieu de conseiller l'impossible. Meme condition, mot pour
     // mot, que celle qui decide d'afficher la case (nanrHtml ci-dessus) : les deux ne peuvent pas
