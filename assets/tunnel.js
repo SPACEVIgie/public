@@ -1540,6 +1540,55 @@
       '</div>']);
   }
 
+  // ---- Coordonnees obligatoires (09/11/2026, 2.0.5, demande d'Olivier) ----
+  // POURQUOI CES TROIS CHAMPS, ET POURQUOI MAINTENANT. Le serveur cree desormais une FICHE
+  // CONTACT a partir de ce que ce formulaire envoie (`lib/contactTunnel.js`, 09/11/2026), et il
+  // met ces valeurs dans le mail d'equipe. Un champ vide n'y est plus seulement un blanc : il
+  // donne « non renseigne » sur la fiche client, et l'equipe n'a alors personne a rappeler.
+  // 🔴 CE CHEMIN EST CELUI DU NOUVEAU CLIENT, ET LUI SEUL. Le formulaire n'est pas montre a un
+  // client IDENTIFIE (`renderStepPaiement` : `state.identifie ? '' :
+  // renderContactNouveauClient()`), et la garde ci-dessous vit DEJA dans un `if
+  // (!state.identifie)`. Rien n'est donc ajoute au chemin identifie -- et c'etait la condition :
+  // une fiche client sans telephone bloquerait un client qui n'a aucun champ ou le saisir.
+  //
+  // UN CHAMP RENSEIGNE, C'EST NON BLANC APRES `trim()` -- ET NON « truthy ».
+  // 🔴 `'   '` EST truthy : les gardes d'avant ce lot le laissaient passer, et le serveur le
+  // recevait comme un blanc (ses bornes font `btrim`, `lib/bornesEntrees.js`). L'ecran disait
+  // donc oui a une saisie que la fiche contact enregistrait vide. ⭐ Une obligation qui teste la
+  // verite JavaScript d'une chaine n'oblige a rien.
+  function renseigne(v) {
+    return String(v == null ? '' : v).trim() !== '';
+  }
+
+  // LE TELEPHONE : AU MOINS SIX CHIFFRES, ET AUCUN FORMAT IMPOSE.
+  // 🔴 CE LOT ASSOUPLIT, IL NE DURCIT PAS. La garde du 30/08 exigeait `^\d{10}$` apres retrait
+  // des espaces, points et tirets -- c'est-a-dire DIX CHIFFRES FRANCAIS. Un numero belge, suisse
+  // ou saisi `+33 6 12 34 56 78` etait REFUSE a l'ecran : la reserve etait documentee sur place
+  // (« signale, non assoupli pour l'instant ») et Olivier la leve le 09/11/2026.
+  // On compte les CHIFFRES, ou qu'ils soient, plutot que de dessiner un motif : un indicatif,
+  // une parenthese ou un point ne sont pas des fautes du client.
+  // ⚠️ CE QUI RESTE PLUS LARGE QUE LE SERVEUR, ET C'EST DIT : `bornesEntrees.telephone` accepte
+  // `^[0-9+.\-()\s]{4,30}$`. Une saisie a six chiffres MAIS portant une lettre (« 06 12 34 56 78
+  // poste 4 »), ou depassant 30 caracteres, passe donc cet ecran et se fait refuser par un 400
+  // du serveur. Releve, NON ferme ici : ajouter un jeu de caracteres a cet ecran serait imposer
+  // un format, et c'est exactement ce que cette borne doit cesser de faire.
+  function telephoneSaisi(v) {
+    return (String(v == null ? '' : v).match(/\d/g) || []).length >= 6;
+  }
+
+  // LE REFUS D'UN CHAMP : LE MESSAGE, PUIS LE FOCUS SUR LE CHAMP FAUTIF.
+  // Meme canal de message que les gardes voisines (`state.error` + `render()`), et meme mecanique
+  // de focus que `focusCgps()` -- le seul focus que portait la 2.0.3.
+  // 🔴 LE FOCUS VIENT APRES `render()`, ET L'ORDRE EST LA DECISION : `render()` REECRIT le HTML
+  // de l'etape, donc l'element focalise avant lui est jete et le focus part avec. C'est ce que
+  // `focusCgps()` fait deja, dans cet ordre, et pour cette raison.
+  function refusContact(message, idChamp) {
+    state.error = message;
+    render();
+    var el = document.getElementById(idChamp);
+    if (el && el.focus) el.focus();
+  }
+
   // ---- Bloc coordonnées d'un NOUVEAU client (30/08, chantier SIRET dans le tunnel) ----
   // §1 : choix pro/particulier explicite (un champ, jamais déduit). §2 : préremplissage par
   // BOUTON (jamais automatique), correction toujours possible, établissement fermé signalé sans
@@ -1973,28 +2022,49 @@
           }
           if (state.contact.type === 'professionnel') {
             if (!/^\d{14}$/.test(state.contact.siret || '')) {
-              state.error = 'Le SIRET doit comporter 14 chiffres.';
-              render();
+              refusContact('Le SIRET doit comporter 14 chiffres.', 'spr-c-siret');
               return;
             }
-            if (!state.contact.raison_sociale || !state.contact.adresse_facturation || !state.contact.email) {
-              state.error = 'Merci de renseigner au moins la raison sociale, l\'adresse de facturation et l\'email.';
-              render();
+            // (09/11/2026, 2.0.5) Le message de ce groupe est celui d'avant, MOT POUR MOT : ces
+            // trois champs etaient deja obligatoires. Ce qui change est `renseigne()` a la place
+            // de la verite JavaScript (`'   '` passait), et le focus sur le PREMIER des trois qui
+            // manque -- un message qui nomme trois champs sans dire lequel fait relire les trois.
+            if (!renseigne(state.contact.raison_sociale) || !renseigne(state.contact.adresse_facturation) || !renseigne(state.contact.email)) {
+              refusContact('Merci de renseigner au moins la raison sociale, l\'adresse de facturation et l\'email.',
+                !renseigne(state.contact.raison_sociale) ? 'spr-c-raison'
+                  : (!renseigne(state.contact.adresse_facturation) ? 'spr-c-adresse' : 'spr-c-email'));
               return;
             }
-          } else if (!state.contact.raison_sociale || !state.contact.email) {
-            state.error = 'Merci de renseigner au moins votre nom et votre email.';
-            render();
+            // (09/11/2026, 2.0.5, demande d'Olivier) LE NOM DU CONTACT -- NOUVELLE OBLIGATION.
+            // 🔴 C'EST LE SEUL CHAMP D'IDENTITE QUI MANQUAIT, et il manquait pour le seul profil
+            // ou il existe. Chez un PARTICULIER, « Nom complet » est le champ `raison_sociale`
+            // (`renderContactNouveauClient`), deja exige par la garde ci-dessous. Chez un
+            // PROFESSIONNEL, `raison_sociale` designe la SOCIETE et `contact.nom` la personne :
+            // il etait facultatif, et c'est lui que le serveur ecrit dans `responsable_nom` puis
+            // dans la fiche contact. ⚠️ Et le repli serveur ne couvre PAS ce profil : il recopie
+            // `raison_sociale` dans `responsable_nom` pour un particulier SEULEMENT -- ecrire une
+            // raison sociale la ferait appeler « Monsieur SARL » (`routes/tunnel.js`, § du repli).
+            if (!renseigne(state.contact.nom)) {
+              refusContact('Merci d\'indiquer le nom du contact.', 'spr-c-nom');
+              return;
+            }
+          } else if (!renseigne(state.contact.raison_sociale) || !renseigne(state.contact.email)) {
+            // (09/11/2026, 2.0.5) « Nom complet » d'un particulier EST `raison_sociale` : cette
+            // garde le rendait deja obligatoire. Seuls le `trim()` et le focus sont nouveaux.
+            refusContact('Merci de renseigner au moins votre nom et votre email.',
+              !renseigne(state.contact.raison_sociale) ? 'spr-c-raison' : 'spr-c-email');
             return;
           }
           // (30/08 soir, correctif post-test Olivier) — telephone obligatoire, pro ET particulier :
           // tous les refus de geste espace client renvoient vers "appelez-nous", l'equipe doit donc
-          // toujours avoir un numero pour rappeler. 10 chiffres — un numero etranger (belge, suisse)
-          // n'en fait pas 10 : signale, non assoupli pour l'instant (reserve documentee, pas un
-          // correctif de ce chantier).
-          if (!/^\d{10}$/.test((state.contact.telephone || '').replace(/[\s.\-]/g, ''))) {
-            state.error = 'Le téléphone doit comporter 10 chiffres.';
-            render();
+          // toujours avoir un numero pour rappeler.
+          // (09/11/2026, 2.0.5, demande d'Olivier) LA RESERVE DU 30/08 EST LEVEE : `^\d{10}$`
+          // exigeait dix chiffres FRANCAIS et refusait un numero etranger -- ou un `+33 6 12 34
+          // 56 78`, que le serveur accepte pourtant (`bornesEntrees.telephone`). On exige
+          // desormais SIX CHIFFRES au moins, sans format. Voir `telephoneSaisi()` pour ce qui
+          // reste plus large que le serveur, et qui est releve sans etre ferme ici.
+          if (!telephoneSaisi(state.contact.telephone)) {
+            refusContact('Merci d\'indiquer un téléphone où nous pouvons vous joindre (au moins 6 chiffres).', 'spr-c-telephone');
             return;
           }
         }
