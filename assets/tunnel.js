@@ -1560,20 +1560,51 @@
     return String(v == null ? '' : v).trim() !== '';
   }
 
-  // LE TELEPHONE : AU MOINS SIX CHIFFRES, ET AUCUN FORMAT IMPOSE.
-  // 🔴 CE LOT ASSOUPLIT, IL NE DURCIT PAS. La garde du 30/08 exigeait `^\d{10}$` apres retrait
-  // des espaces, points et tirets -- c'est-a-dire DIX CHIFFRES FRANCAIS. Un numero belge, suisse
-  // ou saisi `+33 6 12 34 56 78` etait REFUSE a l'ecran : la reserve etait documentee sur place
-  // (« signale, non assoupli pour l'instant ») et Olivier la leve le 09/11/2026.
-  // On compte les CHIFFRES, ou qu'ils soient, plutot que de dessiner un motif : un indicatif,
-  // une parenthese ou un point ne sont pas des fautes du client.
-  // ⚠️ CE QUI RESTE PLUS LARGE QUE LE SERVEUR, ET C'EST DIT : `bornesEntrees.telephone` accepte
-  // `^[0-9+.\-()\s]{4,30}$`. Une saisie a six chiffres MAIS portant une lettre (« 06 12 34 56 78
-  // poste 4 »), ou depassant 30 caracteres, passe donc cet ecran et se fait refuser par un 400
-  // du serveur. Releve, NON ferme ici : ajouter un jeu de caracteres a cet ecran serait imposer
-  // un format, et c'est exactement ce que cette borne doit cesser de faire.
-  function telephoneSaisi(v) {
-    return (String(v == null ? '' : v).match(/\d/g) || []).length >= 6;
+  // LE TELEPHONE : AU MOINS SIX CHIFFRES, ET LA BORNE DU SERVEUR -- RIEN DE PLUS.
+  // 🔴 CE LOT A ASSOUPLI LE FORMAT, ET CE QUI SUIT NE LE REIMPOSE PAS. La garde du 30/08
+  // exigeait `^\d{10}$` apres retrait des espaces, points et tirets -- DIX CHIFFRES FRANCAIS --
+  // et refusait un numero belge, suisse, ou un `+33 6 12 34 56 78`. Olivier a leve cette reserve
+  // le 09/11/2026 et on ne la retablit pas : aucun motif de numero n'est dessine ici, aucun
+  // groupe n'est compte, aucun indicatif n'est exige. On reprend SEULEMENT ce que le serveur
+  // refuse DEJA, pour le dire a l'ecran au lieu de le laisser revenir en 400.
+  //
+  // ⭐ UNE SEULE DEFINITION DU JEU DE CARACTERES ET DE LA LONGUEUR, ET C'EST CELLE DU SERVEUR,
+  // recopiee avec sa reference, relevee le 09/11/2026 :
+  //     ~/s-pace-suite/api/sresa/lib/bornesEntrees.js:131
+  //     if (!/^[0-9+.\-()\s]{4,30}$/.test(s)) return refus(champ, 'numero de telephone invalide');
+  // ou `s` vaut `String(v).trim()` (meme fichier, l.130) : la longueur se mesure donc APRES
+  // `trim()`, et c'est ce qu'on fait ici. 🔴 Sans ce `trim()`, deux espaces de queue feraient
+  // refuser a l'ecran une saisie de 30 caracteres que le serveur, lui, accepte.
+  //
+  // 🔴 POURQUOI ON LA FERME MAINTENANT. L'ecran disait oui a « 06 12 34 56 78 poste 4 » et a une
+  // saisie de plus de 30 caracteres ; le serveur rendait ensuite un 400 `champ_invalide` sur
+  // `responsable_telephone`. Un refus que le client ne peut pas comprendre, puisque l'ecran
+  // venait de l'accepter. Decision d'Olivier du 09/11/2026 : l'ecran refuse ce que le serveur
+  // refuse. Ce n'est pas un format francais retabli, c'est la MEME borne, dite plus tot.
+  //
+  // ⚠️ LA BORNE BASSE DU SERVEUR (4 caracteres) N'EST PAS RECOPIEE, ET C'EST VOULU : nos SIX
+  // CHIFFRES l'impliquent deja (six chiffres font au moins six caracteres). La recopier
+  // donnerait deux regles pour une seule contrainte -- la double definition qu'on evite ici.
+  // ⚠️ DANS L'AUTRE SENS, CET ECRAN RESTE PLUS STRICT QUE LE SERVEUR sur le nombre de chiffres
+  // (6 ici, 4 caracteres la-bas, et un champ vide y passe meme en `null`). Un ecran plus exigeant
+  // que l'API ne fait jamais refuser une requete : il en fait partir moins.
+  var TEL_SERVEUR_CARACTERES = /^[0-9+.\-()\s]*$/;
+  var TEL_SERVEUR_LONGUEUR_MAX = 30;
+  var TEL_CHIFFRES_MIN = 6;
+
+  // Rend `null` quand la saisie passe, sinon LE MESSAGE a afficher. Un seul endroit decide donc
+  // de l'ORDRE des deux refus, et c'est le jeu de caracteres d'abord : pour « abc », les deux
+  // regles echouent, et « au moins 6 chiffres » n'apprendrait rien a qui vient de taper des
+  // lettres. ⭐ Le nom dit ce que la fonction rend : elle rendait un booleen, elle rend un refus.
+  function telephoneRefus(v) {
+    var s = String(v == null ? '' : v).trim();
+    if (!TEL_SERVEUR_CARACTERES.test(s) || s.length > TEL_SERVEUR_LONGUEUR_MAX) {
+      return 'Merci d\'indiquer un téléphone en chiffres (les espaces, le +, les parenthèses, le point et le tiret sont acceptés), 30 caractères au plus.';
+    }
+    if ((s.match(/\d/g) || []).length < TEL_CHIFFRES_MIN) {
+      return 'Merci d\'indiquer un téléphone où nous pouvons vous joindre (au moins 6 chiffres).';
+    }
+    return null;
   }
 
   // LE REFUS D'UN CHAMP : LE MESSAGE, PUIS LE FOCUS SUR LE CHAMP FAUTIF.
@@ -2061,10 +2092,15 @@
           // (09/11/2026, 2.0.5, demande d'Olivier) LA RESERVE DU 30/08 EST LEVEE : `^\d{10}$`
           // exigeait dix chiffres FRANCAIS et refusait un numero etranger -- ou un `+33 6 12 34
           // 56 78`, que le serveur accepte pourtant (`bornesEntrees.telephone`). On exige
-          // desormais SIX CHIFFRES au moins, sans format. Voir `telephoneSaisi()` pour ce qui
-          // reste plus large que le serveur, et qui est releve sans etre ferme ici.
-          if (!telephoneSaisi(state.contact.telephone)) {
-            refusContact('Merci d\'indiquer un téléphone où nous pouvons vous joindre (au moins 6 chiffres).', 'spr-c-telephone');
+          // desormais SIX CHIFFRES au moins, ET le jeu de caracteres du serveur -- sans dessiner
+          // aucun format de numero. 🔴 LE MESSAGE VIENT DE LA FONCTION, il n'est pas ecrit ici :
+          // deux refus sont possibles (le jeu de caracteres ou la longueur, puis le nombre de
+          // chiffres) et c'est `telephoneRefus()` qui choisit lequel est utile au client. La
+          // borne du serveur y est recopiee UNE SEULE FOIS, avec sa reference
+          // (`api/sresa/lib/bornesEntrees.js:131`).
+          var refusTelephone = telephoneRefus(state.contact.telephone);
+          if (refusTelephone) {
+            refusContact(refusTelephone, 'spr-c-telephone');
             return;
           }
         }
