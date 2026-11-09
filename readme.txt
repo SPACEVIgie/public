@@ -4,7 +4,7 @@ Tags: réservation, salles, coworking
 Requires at least: 5.5
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.0.4
+Stable tag: 2.0.5
 License: GPLv2 or later
 
 Tunnel de réservation en ligne pour S-PACE Business Center.
@@ -62,6 +62,29 @@ navigateur du visiteur, vers l'API S-RESA.
   tunnel, ce contrôle n'a lieu qu'à la confirmation, pas à la recherche.
 
 == Changelog ==
+
+= 2.0.5 =
+* [space_reservation] Le délai du tarif non remboursable n'est plus écrit dans l'extension : il
+  vient du serveur. Jusqu'ici l'extension comparait à 21 jours écrits chez elle, et modifier la
+  règle côté serveur laissait l'écran proposer — ou refuser — la case au mauvais jour. La valeur
+  écrite dans l'extension est conservée comme repli : tant que le serveur ne sert aucun délai, le
+  comportement reste exactement celui d'avant.
+* [space_reservation] La remise du tarif non remboursable est désormais CHIFFRÉE AVANT le cochage.
+  Jusqu'ici le pourcentage n'était connu qu'après avoir coché la case : le visiteur devait accepter
+  une réservation « non annulable » pour apprendre ce qu'il obtenait en échange. Le pourcentage
+  reste celui du serveur dans tous les cas, et l'écran n'annonce aucun chiffre lorsque le serveur
+  n'en sert pas.
+* [space_reservation] Les coordonnées d'un nouveau client deviennent obligatoires à l'écran : le
+  nom du contact pour un professionnel, le nom complet pour un particulier, et le téléphone pour
+  les deux. Une réservation ne part plus sans eux, le champ manquant est signalé et reçoit le
+  curseur. Les numéros étrangers sont désormais acceptés — l'extension exigeait dix chiffres
+  français, ce qui refusait un numéro belge ou suisse, et même un numéro français saisi avec son
+  indicatif international.
+* [space_reservation] Un client déjà identifié n'est pas concerné par ces champs : son parcours
+  est inchangé, et ses coordonnées continuent de venir de sa fiche.
+* Cette version contient aussi la 2.0.4, qui n'a pas été publiée séparément : le lien vers les
+  conditions générales de prestations de services vient du serveur, qui nomme le texte en vigueur,
+  avec l'adresse écrite dans l'extension conservée comme repli.
 
 = 2.0.4 =
 * [space_reservation] Le lien vers les conditions générales de prestations de services n'est plus
